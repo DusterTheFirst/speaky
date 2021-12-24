@@ -1,38 +1,36 @@
-//! Uses Pico TTS to speak a phrase (via [`cpal`]).
-
-// The MIT License
-//
-// Copyright (c) 2019 Paolo Jovon <paolo.jovon@gmail.com>
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-// THE SOFTWARE.
-
 use rodio::{buffer::SamplesBuffer, OutputStream, Source};
-use std::{io::{self, Write}, rc::Rc, thread};
-use ttspico as pico;
+use std::{
+    io::{self, Write},
+    path::{Path},
+    rc::Rc,
+    thread,
+};
+use ttspico::{Engine, EngineStatus, System, Voice};
 
 fn main() {
     let (_stream, stream_handle) = OutputStream::try_default().unwrap();
 
-    let mut engine = setup_tts();
-
     let stdin = io::stdin();
     let mut stdout = io::stdout();
+
+    let resources = loop {
+        write!(stdout, "language> ").expect("unable to write to stdout");
+        stdout.flush().expect("unable to write to stdout");
+
+        let mut lang = String::new();
+        stdin
+            .read_line(&mut lang)
+            .expect("unable to read input line");
+
+        let lang = lang.trim_end();
+
+        match load_language(lang) {
+            Ok(resources) => break resources,
+            Err(error) => eprintln!("{}", error),
+        }
+    };
+
+    let mut engine = setup_tts(resources);
 
     loop {
         write!(stdout, "synth> ").expect("unable to write to stdout");
@@ -43,7 +41,9 @@ fn main() {
             .read_line(&mut line)
             .expect("unable to read input line");
 
-        let speech = synthesize(&mut engine, &line);
+        let line = line.trim_end();
+
+        let speech = synthesize(&mut engine, line);
 
         let duration = speech
             .total_duration()
@@ -55,7 +55,7 @@ fn main() {
     }
 }
 
-fn synthesize(engine: &mut pico::Engine, text: &str) -> SamplesBuffer<i16> {
+fn synthesize(engine: &mut Engine, text: &str) -> SamplesBuffer<i16> {
     // 5. Put (UTF-8) text to be spoken into the engine
     // See `Engine::put_text()` for more details.
     let text_bytes = text.bytes().chain(std::iter::once(0)).collect::<Vec<_>>();
@@ -73,31 +73,88 @@ fn synthesize(engine: &mut pico::Engine, text: &str) -> SamplesBuffer<i16> {
     // Speech audio is computed in small chunks, one "step" at a time; see `Engine::get_data()` for more details.
     let mut pcm_data = Vec::new();
     let mut pcm_buf = [0i16; 1024];
-    'tts: loop {
+    loop {
         let (n_written, status) = engine
             .get_data(&mut pcm_buf[..])
-            .expect("pico_getData error");
+            .expect("failed to get pico pcm data");
 
         pcm_data.extend(&pcm_buf[..n_written]);
 
-        if status == ttspico::EngineStatus::Idle {
-            break 'tts;
+        if status == EngineStatus::Idle {
+            break;
         }
     }
 
     SamplesBuffer::new(1, 16_000, pcm_data)
 }
 
-fn setup_tts() -> pico::Engine {
+fn load_language(lang: &str) -> Result<TTSResources, String> {
+    let lang_dir = Path::new("./lang");
+
+    if !lang_dir.exists() {
+        return Err("languages directory does not exist".to_string());
+    }
+
+    let lang = Path::new(lang);
+
+    if lang.components().count() > 1 {
+        return Err("language name contains invalid characters".to_string());
+    }
+
+    let lang_dir = lang_dir.join(lang);
+
+    if !lang_dir.exists() {
+        return Err(format!("{:?} language directory does not exist", lang));
+    }
+
+    let text_analysis = lang_dir.join("ta.bin");
+    if !text_analysis.exists() {
+        return Err(format!(
+            "text analysis file does not exist for language {:?}",
+            lang
+        ));
+    }
+
+    let speech_generation = lang_dir.join("sg.bin");
+    if !speech_generation.exists() {
+        return Err(format!(
+            "speech generation file does not exist for language {:?}",
+            lang
+        ));
+    }
+
+    Ok(TTSResources {
+        text_analysis: text_analysis.to_str().map(str::to_string).ok_or_else(|| {
+            "text analysis file path contained non-unicode characters".to_string()
+        })?,
+        speech_generation: speech_generation
+            .to_str()
+            .map(str::to_string)
+            .ok_or_else(|| {
+                "speech generation file path contained non-unicode characters".to_string()
+            })?,
+    })
+}
+
+struct TTSResources {
+    text_analysis: String,
+    speech_generation: String,
+}
+
+fn setup_tts(
+    TTSResources {
+        text_analysis,
+        speech_generation,
+    }: TTSResources,
+) -> Engine {
     // 1. Create a Pico system
     // NOTE: There should at most one System per thread!
-    let sys = pico::System::new(4 * 1024 * 1024).expect("Could not init system");
+    let sys = System::new(4 * 1024 * 1024).expect("Could not init ttspico system");
 
     // 2. Load Text Analysis (TA) and Speech Generation (SG) resources for the voice you want to use
-    let ta_res = pico::System::load_resource(Rc::clone(&sys), "lang/en-US_ta.bin")
-        .expect("Failed to load TA");
-    let sg_res = pico::System::load_resource(Rc::clone(&sys), "lang/en-US_lh0_sg.bin")
-        .expect("Failed to load SG");
+    let ta_res = System::load_resource(Rc::clone(&sys), text_analysis).expect("Failed to load TA");
+    let sg_res =
+        System::load_resource(Rc::clone(&sys), speech_generation).expect("Failed to load SG");
     println!(
         "TA: {}, SG: {}",
         ta_res.borrow().name().unwrap(),
@@ -105,7 +162,7 @@ fn setup_tts() -> pico::Engine {
     );
 
     // 3. Create a Pico voice definition and attach the loaded resources to it
-    let voice = pico::System::create_voice(sys, "TestVoice").expect("Failed to create voice");
+    let voice = System::create_voice(sys, "TestVoice").expect("Failed to create voice");
     voice
         .borrow_mut()
         .add_resource(ta_res)
@@ -117,5 +174,7 @@ fn setup_tts() -> pico::Engine {
 
     // 4. Create an engine from the voice definition
     // UNSAFE: Creating an engine without attaching the resources will result in a crash!
-    unsafe { pico::Voice::create_engine(voice).expect("Failed to create engine") }
+    unsafe { Voice::create_engine(voice).expect("Failed to create engine") }
+
+    // TODO: make PR on ttspico to make this an impossible situation
 }
