@@ -1,9 +1,10 @@
 use rodio::{buffer::SamplesBuffer, OutputStream, Source};
 use std::{
     io::{self, Write},
-    path::{Path},
+    path::Path,
     rc::Rc,
     thread,
+    time::Duration,
 };
 use ttspico::{Engine, EngineStatus, System, Voice};
 
@@ -49,7 +50,14 @@ fn main() {
             .total_duration()
             .expect("speech sample has an unknown duration");
 
-        stream_handle.play_raw(speech.convert_samples()).unwrap();
+        stream_handle
+            .play_raw(
+                speech
+                    .buffered()
+                    .reverb(Duration::from_millis(100), 0.8)
+                    .convert_samples(),
+            )
+            .unwrap();
 
         thread::sleep(duration);
     }
