@@ -8,7 +8,7 @@ color-eyre = "0.6.0"
 eframe = "0.16.0"
 microfft = { version = "0.4.0", features = ["size-16384"] }
 num-complex = "0.4.0"
-rodio = "0.15.0"
+rodio = { version = "0.15.0", default-features = false }
 tracing = "0.1.30"
 tracing-error = "0.2.0"
 tracing-subscriber = { version = "0.3.8", features = ["env-filter"] }

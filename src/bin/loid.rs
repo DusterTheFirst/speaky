@@ -9,7 +9,7 @@ use color_eyre::eyre::Context;
 use eframe::{
     egui::{
         plot::{Bar, BarChart, Legend, Plot, Points, VLine, Value, Values},
-        Button, CentralPanel, CtxRef,
+        Button, CentralPanel, Color32, ComboBox, CtxRef, Slider,
     },
     epi::{App, Frame},
     NativeOptions,
@@ -44,7 +44,7 @@ fn main() -> color_eyre::Result<()> {
     let half_spectrum = {
         assert!(samples.len() >= N, "Too few samples");
 
-        let mut fixed_sized_samples: Box<[f32; N]> = Box::new([0.0; N]);
+        let mut fixed_sized_samples = Box::new([0.0; N]);
         fixed_sized_samples.copy_from_slice(&samples[..N]);
 
         let fixed_sized_samples = Box::leak(fixed_sized_samples);
@@ -54,6 +54,59 @@ fn main() -> color_eyre::Result<()> {
         // This saves a large copy
         unsafe { Box::from_raw(spectrum) }
     };
+
+    let maximum = half_spectrum
+        .iter()
+        .enumerate()
+        .map(|(freq, complex)| (freq, complex.norm_sqr()))
+        .reduce(|(freq1, norm1), (freq2, norm2)| {
+            if norm1 > norm2 {
+                (freq1, norm1)
+            } else {
+                (freq2, norm2)
+            }
+        })
+        .map(|(freq, _)| freq)
+        .unwrap();
+
+    dbg!(maximum);
+
+    let scale = 2.0;
+
+    let mut half_spectrum_rotate = Box::new([Complex::new(0.0, 0.0); N / 2]);
+    half_spectrum_rotate[0] = half_spectrum[0];
+    for (freq, component) in half_spectrum[1..].iter().copied().enumerate() {
+        let new_freq = (freq as f32 * scale).round() as usize;
+
+        if new_freq >= half_spectrum_rotate.len() {
+            break;
+        }
+
+        half_spectrum_rotate[new_freq] = component;
+    }
+
+    let half_spectrum = half_spectrum_rotate;
+
+    // let maximum = 440;
+
+    // half_spectrum[1..].rotate_right(maximum);
+    // half_spectrum[0].im = half_spectrum[1].re;
+    // half_spectrum[1..maximum].fill(Complex::new(0.0, 0.0));
+
+    let maximum = half_spectrum
+        .iter()
+        .enumerate()
+        .map(|(freq, complex)| (freq, complex.norm_sqr()))
+        .reduce(|(freq1, norm1), (freq2, norm2)| {
+            if norm1 > norm2 {
+                (freq1, norm1)
+            } else {
+                (freq2, norm2)
+            }
+        })
+        .map(|(freq, _)| freq);
+
+    dbg!(maximum);
 
     let full_spectrum = {
         // The real-valued coefficient at the Nyquist frequency
@@ -102,6 +155,9 @@ fn main() -> color_eyre::Result<()> {
             spectrum: half_spectrum,
 
             last_update: None,
+
+            cursor: 0,
+            width: N,
         }),
         NativeOptions::default(),
     )
@@ -118,6 +174,9 @@ struct Loid {
     spectrum: Box<[Complex<f32>; N / 2]>,
 
     last_update: Option<Duration>,
+
+    cursor: usize,
+    width: usize,
 }
 
 impl Loid {
@@ -140,14 +199,16 @@ impl App for Loid {
         let update_start = Instant::now();
 
         CentralPanel::default().show(ctx, |ui| {
-            ui.label(format!(
-                "Last frame: {:.4} ms",
-                frame.info().cpu_usage.unwrap_or(0.0) * 1000.0
-            ));
-            ui.label(format!(
-                "Last update: {:.4} ms",
-                self.last_update.unwrap_or_default().as_secs_f64() * 1000.0
-            ));
+            ui.horizontal_wrapped(|ui| {
+                ui.label(format!(
+                    "Last frame: {:.4} ms",
+                    frame.info().cpu_usage.unwrap_or(0.0) * 1000.0
+                ));
+                ui.label(format!(
+                    "Last update: {:.4} ms",
+                    self.last_update.unwrap_or_default().as_secs_f64() * 1000.0
+                ));
+            });
 
             ui.horizontal_wrapped(|ui| {
                 if ui
@@ -165,10 +226,25 @@ impl App for Loid {
                 }
             });
 
-            // FIXME: heavy on the iterators I think
+            ui.add(
+                Slider::new(&mut self.cursor, 0..=(self.samples.len() - self.width - 1))
+                    .prefix("sample ")
+                    .text("FFT window start"),
+            );
+            ComboBox::from_label("FFT window width")
+                .selected_text(format!("{} samples", self.width))
+                .show_ui(ui, |ui| {
+                    for width in 1..=14 {
+                        let width = 1 << width;
+
+                        ui.selectable_value(&mut self.width, width, format!("{width}"));
+                    }
+                });
+
             Plot::new("samples")
-                .height(ui.available_height() / 3.0)
+                .height(ui.available_height() / 2.0)
                 .center_y_axis(true)
+                .legend(Legend::default())
                 .show(ui, |ui| {
                     ui.points(
                         Points::new(Values::from_values_iter(
@@ -178,15 +254,40 @@ impl App for Loid {
                                 .enumerate()
                                 .map(|(n, x)| Value::new(n as f32 / self.sample_rate as f32, x)),
                         ))
+                        .name("Original Samples")
                         .stems(0.0),
                     );
 
-                    ui.vline(VLine::new(N as f32 / self.sample_rate as f32));
-                    ui.vline(VLine::new(0.0 / self.sample_rate as f32));
+                    // ui.points(
+                    //     Points::new(Values::from_values_iter(
+                    //         self.reconstructed_samples
+                    //             .iter()
+                    //             .copied()
+                    //             .enumerate()
+                    //             // .step_by(skip + 1)
+                    //             .map(|(n, x)| Value::new(n as f32 / self.sample_rate as f32, x)),
+                    //     ))
+                    //     .name("Reconstructed Samples")
+                    //     .stems(0.0),
+                    // );
+
+                    let starting_cursor = self.cursor as f32 / self.sample_rate as f32;
+                    let ending_cursor = (self.cursor + self.width) as f32 / self.sample_rate as f32;
+
+                    ui.vline(
+                        VLine::new(starting_cursor)
+                            .color(Color32::DARK_GREEN)
+                            .width(2.5),
+                    );
+                    ui.vline(
+                        VLine::new(ending_cursor)
+                            .color(Color32::DARK_RED)
+                            .width(1.5),
+                    );
                 });
 
             Plot::new("frequencies")
-                .height(ui.available_height() / 2.0)
+                .height(ui.available_height())
                 .legend(Legend::default())
                 .show(ui, |ui| {
                     let amplitudes = self.spectrum.iter().map(|complex| complex.norm());
@@ -212,25 +313,6 @@ impl App for Loid {
                         )
                         .name("Phase"),
                     );
-                });
-
-            Plot::new("samples")
-                .height(ui.available_height())
-                .center_y_axis(true)
-                .show(ui, |ui| {
-                    ui.points(
-                        Points::new(Values::from_values_iter(
-                            self.reconstructed_samples
-                                .iter()
-                                .copied()
-                                .enumerate()
-                                .map(|(n, x)| Value::new(n as f32 / self.sample_rate as f32, x)),
-                        ))
-                        .stems(0.0),
-                    );
-
-                    ui.vline(VLine::new(N as f32 / self.sample_rate as f32));
-                    ui.vline(VLine::new(0.0 / self.sample_rate as f32));
                 });
         });
 
