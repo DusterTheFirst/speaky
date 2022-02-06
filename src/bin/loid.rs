@@ -1,5 +1,4 @@
 use std::{
-    iter,
     sync::Arc,
     thread,
     time::{Duration, Instant},
@@ -14,15 +13,12 @@ use eframe::{
     epi::{App, Frame},
     NativeOptions,
 };
-use microfft::{complex::cfft_16384, real::rfft_16384};
 use num_complex::Complex;
 use rodio::{buffer::SamplesBuffer, OutputStream, Sink, Source};
 use speaky::{
     install_tracing,
     tts::{load_language, setup_tts, synthesize},
 };
-
-const N: usize = 16384;
 
 fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
@@ -41,51 +37,41 @@ fn main() -> color_eyre::Result<()> {
     let sample_rate = speech.sample_rate();
     let samples: Vec<f32> = speech.convert_samples().collect();
 
-    let half_spectrum = {
-        assert!(samples.len() >= N, "Too few samples");
+    // let half_spectrum = {
 
-        let mut fixed_sized_samples = Box::new([0.0; N]);
-        fixed_sized_samples.copy_from_slice(&samples[..N]);
+    // };
 
-        let fixed_sized_samples = Box::leak(fixed_sized_samples);
+    // let maximum = half_spectrum
+    //     .iter()
+    //     .enumerate()
+    //     .map(|(freq, complex)| (freq, complex.norm_sqr()))
+    //     .reduce(|(freq1, norm1), (freq2, norm2)| {
+    //         if norm1 > norm2 {
+    //             (freq1, norm1)
+    //         } else {
+    //             (freq2, norm2)
+    //         }
+    //     })
+    //     .map(|(freq, _)| freq)
+    //     .unwrap();
 
-        let spectrum = rfft_16384(fixed_sized_samples);
+    // dbg!(maximum);
 
-        // This saves a large copy
-        unsafe { Box::from_raw(spectrum) }
-    };
+    // let scale = 2.0;
 
-    let maximum = half_spectrum
-        .iter()
-        .enumerate()
-        .map(|(freq, complex)| (freq, complex.norm_sqr()))
-        .reduce(|(freq1, norm1), (freq2, norm2)| {
-            if norm1 > norm2 {
-                (freq1, norm1)
-            } else {
-                (freq2, norm2)
-            }
-        })
-        .map(|(freq, _)| freq)
-        .unwrap();
+    // let mut half_spectrum_rotate = Box::new([Complex::new(0.0, 0.0); N / 2]);
+    // half_spectrum_rotate[0] = half_spectrum[0];
+    // for (freq, component) in half_spectrum[1..].iter().copied().enumerate() {
+    //     let new_freq = (freq as f32 * scale).round() as usize;
 
-    dbg!(maximum);
+    //     if new_freq >= half_spectrum_rotate.len() {
+    //         break;
+    //     }
 
-    let scale = 2.0;
+    //     half_spectrum_rotate[new_freq] = component;
+    // }
 
-    let mut half_spectrum_rotate = Box::new([Complex::new(0.0, 0.0); N / 2]);
-    half_spectrum_rotate[0] = half_spectrum[0];
-    for (freq, component) in half_spectrum[1..].iter().copied().enumerate() {
-        let new_freq = (freq as f32 * scale).round() as usize;
-
-        if new_freq >= half_spectrum_rotate.len() {
-            break;
-        }
-
-        half_spectrum_rotate[new_freq] = component;
-    }
-
-    let half_spectrum = half_spectrum_rotate;
+    // let half_spectrum = half_spectrum_rotate;
 
     // let maximum = 440;
 
@@ -93,56 +79,56 @@ fn main() -> color_eyre::Result<()> {
     // half_spectrum[0].im = half_spectrum[1].re;
     // half_spectrum[1..maximum].fill(Complex::new(0.0, 0.0));
 
-    let maximum = half_spectrum
-        .iter()
-        .enumerate()
-        .map(|(freq, complex)| (freq, complex.norm_sqr()))
-        .reduce(|(freq1, norm1), (freq2, norm2)| {
-            if norm1 > norm2 {
-                (freq1, norm1)
-            } else {
-                (freq2, norm2)
-            }
-        })
-        .map(|(freq, _)| freq);
+    // let maximum = half_spectrum
+    //     .iter()
+    //     .enumerate()
+    //     .map(|(freq, complex)| (freq, complex.norm_sqr()))
+    //     .reduce(|(freq1, norm1), (freq2, norm2)| {
+    //         if norm1 > norm2 {
+    //             (freq1, norm1)
+    //         } else {
+    //             (freq2, norm2)
+    //         }
+    //     })
+    //     .map(|(freq, _)| freq);
 
-    dbg!(maximum);
+    // dbg!(maximum);
 
-    let full_spectrum = {
-        // The real-valued coefficient at the Nyquist frequency
-        // is packed into the imaginary part of the DC bin.
-        let real_at_nyquist = half_spectrum[0].im;
-        let dc = half_spectrum[0].re;
+    // let full_spectrum = {
+    //     // The real-valued coefficient at the Nyquist frequency
+    //     // is packed into the imaginary part of the DC bin.
+    //     let real_at_nyquist = half_spectrum[0].im;
+    //     let dc = half_spectrum[0].re;
 
-        let half_spectrum = half_spectrum.iter().skip(1).copied();
+    //     let half_spectrum = half_spectrum.iter().skip(1).copied();
 
-        iter::once(Complex::new(dc, 0.0))
-            .chain(half_spectrum.clone())
-            .chain(iter::once(Complex::new(real_at_nyquist, 0.0)))
-            .chain(half_spectrum.map(|complex| complex.conj()).rev())
-            .collect::<Vec<_>>()
-    };
+    //     iter::once(Complex::new(dc, 0.0))
+    //         .chain(half_spectrum.clone())
+    //         .chain(iter::once(Complex::new(real_at_nyquist, 0.0)))
+    //         .chain(half_spectrum.map(|complex| complex.conj()).rev())
+    //         .collect::<Vec<_>>()
+    // };
 
-    let reconstructed_samples = {
-        let spectrum_conjugate = full_spectrum
-            .iter()
-            .map(|complex| Complex::new(complex.im, complex.re));
+    // let reconstructed_samples = {
+    //     let spectrum_conjugate = full_spectrum
+    //         .iter()
+    //         .map(|complex| Complex::new(complex.im, complex.re));
 
-        let mut fixed_sized_spectrum: Box<[Complex<f32>; N]> =
-            Box::new([Complex::new(0.0, 0.0); N]);
+    //     let mut fixed_sized_spectrum: Box<[Complex<f32>; N]> =
+    //         Box::new([Complex::new(0.0, 0.0); N]);
 
-        // Collect iterator into existing buffer
-        for (complex_in, complex_out) in spectrum_conjugate.zip(fixed_sized_spectrum.iter_mut()) {
-            *complex_out = complex_in;
-        }
+    //     // Collect iterator into existing buffer
+    //     for (complex_in, complex_out) in spectrum_conjugate.zip(fixed_sized_spectrum.iter_mut()) {
+    //         *complex_out = complex_in;
+    //     }
 
-        let samples = cfft_16384(&mut fixed_sized_spectrum);
+    //     let samples = cfft_16384(&mut fixed_sized_spectrum);
 
-        samples
-            .iter()
-            .map(|complex| complex.im / N as f32)
-            .collect()
-    };
+    //     samples
+    //         .iter()
+    //         .map(|complex| complex.im / N as f32)
+    //         .collect()
+    // };
 
     eframe::run_native(
         Box::new(Loid {
@@ -150,17 +136,55 @@ fn main() -> color_eyre::Result<()> {
 
             sample_rate,
             samples,
-            reconstructed_samples,
-
-            spectrum: half_spectrum,
 
             last_update: None,
 
             cursor: 0,
-            width: N,
+            width: 256, // TODO: enum
         }),
         NativeOptions::default(),
     )
+}
+
+fn spectrum(samples: &[f32], start: usize, width: usize) -> Box<[Complex<f32>]> {
+    assert!(
+        samples.len() >= width,
+        "fft requires at least {width} samples but was provided {}",
+        samples.len()
+    );
+    assert!(
+        start < samples.len() - width,
+        "start position is too large. {start} >= {}",
+        samples.len() - width
+    );
+
+    let samples: Box<[f32]> = Box::from(&samples[start..(start + width)]);
+    let samples = Box::leak(samples);
+
+    use microfft::real::*;
+
+    let spectrum = match width {
+        2 => rfft_2(samples.try_into().unwrap()) as &mut [Complex<f32>],
+        4 => rfft_4(samples.try_into().unwrap()) as &mut [Complex<f32>],
+        8 => rfft_8(samples.try_into().unwrap()) as &mut [Complex<f32>],
+        16 => rfft_16(samples.try_into().unwrap()) as &mut [Complex<f32>],
+        32 => rfft_32(samples.try_into().unwrap()) as &mut [Complex<f32>],
+        64 => rfft_64(samples.try_into().unwrap()) as &mut [Complex<f32>],
+        128 => rfft_128(samples.try_into().unwrap()) as &mut [Complex<f32>],
+        256 => rfft_256(samples.try_into().unwrap()) as &mut [Complex<f32>],
+        512 => rfft_512(samples.try_into().unwrap()) as &mut [Complex<f32>],
+        1024 => rfft_1024(samples.try_into().unwrap()) as &mut [Complex<f32>],
+        2048 => rfft_2048(samples.try_into().unwrap()) as &mut [Complex<f32>],
+        4096 => rfft_4096(samples.try_into().unwrap()) as &mut [Complex<f32>],
+        8192 => rfft_8192(samples.try_into().unwrap()) as &mut [Complex<f32>],
+        16384 => rfft_16384(samples.try_into().unwrap()) as &mut [Complex<f32>],
+        _ => unimplemented!("width must be a power of 2 between 2 and 16284"),
+    };
+
+    // This lets us reinterpret the box as complex numbers rather than
+    // the floats we passed in without copying the whole buffer
+    unsafe { Box::from_raw(spectrum) }
+    // The above should be sound since we just leaked this box lines before
 }
 
 struct Loid {
@@ -169,9 +193,6 @@ struct Loid {
     sample_rate: u32,
 
     samples: Vec<f32>,
-    reconstructed_samples: Vec<f32>,
-
-    spectrum: Box<[Complex<f32>; N / 2]>,
 
     last_update: Option<Duration>,
 
@@ -217,13 +238,6 @@ impl App for Loid {
                 {
                     self.play(self.samples.as_ref(), frame.clone());
                 }
-
-                if ui
-                    .add_enabled(self.audio_sink.empty(), Button::new("Play Reconstructed"))
-                    .clicked()
-                {
-                    self.play(self.reconstructed_samples.as_ref(), frame.clone());
-                }
             });
 
             ui.add(
@@ -258,19 +272,6 @@ impl App for Loid {
                         .stems(0.0),
                     );
 
-                    // ui.points(
-                    //     Points::new(Values::from_values_iter(
-                    //         self.reconstructed_samples
-                    //             .iter()
-                    //             .copied()
-                    //             .enumerate()
-                    //             // .step_by(skip + 1)
-                    //             .map(|(n, x)| Value::new(n as f32 / self.sample_rate as f32, x)),
-                    //     ))
-                    //     .name("Reconstructed Samples")
-                    //     .stems(0.0),
-                    // );
-
                     let starting_cursor = self.cursor as f32 / self.sample_rate as f32;
                     let ending_cursor = (self.cursor + self.width) as f32 / self.sample_rate as f32;
 
@@ -290,7 +291,13 @@ impl App for Loid {
                 .height(ui.available_height())
                 .legend(Legend::default())
                 .show(ui, |ui| {
-                    let amplitudes = self.spectrum.iter().map(|complex| complex.norm());
+                    let spectrum = spectrum(self.samples.as_ref(), self.cursor, self.width);
+
+                    let amplitudes = spectrum
+                        .iter()
+                        .map(|complex| complex.norm() / self.width as f32);
+
+                    // let phases = spectrum.iter().map(|complex| complex.arg());
 
                     ui.bar_chart(
                         BarChart::new(
@@ -302,17 +309,15 @@ impl App for Loid {
                         .name("Amplitude"),
                     );
 
-                    let phases = self.spectrum.iter().map(|complex| complex.arg());
-
-                    ui.bar_chart(
-                        BarChart::new(
-                            phases
-                                .enumerate()
-                                .map(|(n, amp)| Bar::new(n as f64, amp as f64))
-                                .collect(),
-                        )
-                        .name("Phase"),
-                    );
+                    // ui.bar_chart(
+                    //     BarChart::new(
+                    //         phases
+                    //             .enumerate()
+                    //             .map(|(n, amp)| Bar::new(n as f64, amp as f64))
+                    //             .collect(),
+                    //     )
+                    //     .name("Phase"),
+                    // );
                 });
         });
 
