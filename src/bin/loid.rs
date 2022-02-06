@@ -1,5 +1,8 @@
 use std::{
-    sync::Arc,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -139,6 +142,10 @@ fn main() -> color_eyre::Result<()> {
 
             last_update: None,
 
+            playback_head: Arc::new(AtomicUsize::new(0)),
+
+            follow_playback: true,
+
             cursor: 0,
             width: 256, // TODO: enum
         }),
@@ -196,17 +203,38 @@ struct Loid {
 
     last_update: Option<Duration>,
 
+    playback_head: Arc<AtomicUsize>,
+
+    follow_playback: bool,
+
     cursor: usize,
     width: usize,
 }
 
 impl Loid {
     fn play(&self, samples: &[f32], frame: Frame) {
-        self.audio_sink
-            .append(SamplesBuffer::new(1, self.sample_rate, samples));
+        let duration = Duration::from_millis(10);
+
+        let samples_per_duration =
+            (self.sample_rate as f64 * duration.as_secs_f64()).round() as usize;
+
+        self.audio_sink.append(
+            SamplesBuffer::new(1, self.sample_rate, samples).periodic_access(duration, {
+                let playback_head = self.playback_head.clone();
+                let frame = frame.clone();
+
+                playback_head.store(0, Ordering::SeqCst);
+
+                move |_signal| {
+                    playback_head.fetch_add(samples_per_duration, Ordering::SeqCst);
+                    frame.request_repaint()
+                }
+            }),
+        );
 
         thread::spawn({
             let audio_sink = self.audio_sink.clone();
+
             move || {
                 audio_sink.sleep_until_end();
                 frame.request_repaint();
@@ -229,6 +257,10 @@ impl App for Loid {
                     "Last update: {:.4} ms",
                     self.last_update.unwrap_or_default().as_secs_f64() * 1000.0
                 ));
+                ui.label(format!(
+                    "Max refresh: {:.1} fps",
+                    1.0 / frame.info().cpu_usage.unwrap_or(0.0)
+                ));
             });
 
             ui.horizontal_wrapped(|ui| {
@@ -238,13 +270,26 @@ impl App for Loid {
                 {
                     self.play(self.samples.as_ref(), frame.clone());
                 }
+
+                ui.checkbox(&mut self.follow_playback, "FFT follows playback");
             });
 
-            ui.add(
-                Slider::new(&mut self.cursor, 0..=(self.samples.len() - self.width - 1))
+            let max_cursor = self.samples.len() - self.width - 1;
+
+            ui.add_enabled(
+                !self.follow_playback || self.audio_sink.empty(),
+                Slider::new(&mut self.cursor, 0..=max_cursor)
+                    .integer()
                     .prefix("sample ")
                     .text("FFT window start"),
             );
+
+            let cursor = if self.follow_playback && !self.audio_sink.empty() {
+                self.playback_head.load(Ordering::SeqCst).min(max_cursor)
+            } else {
+                self.cursor
+            };
+
             ComboBox::from_label("FFT window width")
                 .selected_text(format!("{} samples", self.width))
                 .show_ui(ui, |ui| {
@@ -272,26 +317,29 @@ impl App for Loid {
                         .stems(0.0),
                     );
 
-                    let starting_cursor = self.cursor as f32 / self.sample_rate as f32;
-                    let ending_cursor = (self.cursor + self.width) as f32 / self.sample_rate as f32;
-
                     ui.vline(
-                        VLine::new(starting_cursor)
+                        VLine::new(cursor as f32 / self.sample_rate as f32)
                             .color(Color32::DARK_GREEN)
                             .width(2.5),
                     );
                     ui.vline(
-                        VLine::new(ending_cursor)
+                        VLine::new((cursor + self.width) as f32 / self.sample_rate as f32)
                             .color(Color32::DARK_RED)
                             .width(1.5),
                     );
+                    ui.vline(VLine::new(
+                        self.playback_head
+                            .load(Ordering::SeqCst)
+                            .min(self.samples.len()) as f32
+                            / self.sample_rate as f32,
+                    ));
                 });
 
             Plot::new("frequencies")
                 .height(ui.available_height())
                 .legend(Legend::default())
                 .show(ui, |ui| {
-                    let spectrum = spectrum(self.samples.as_ref(), self.cursor, self.width);
+                    let spectrum = spectrum(self.samples.as_ref(), cursor, self.width);
 
                     let amplitudes = spectrum
                         .iter()
