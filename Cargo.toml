@@ -5,10 +5,13 @@ edition = "2021"
 
 [dependencies]
 eframe = "0.16.0"
-microfft = "0.4.0"
+microfft = { version = "0.4.0", features = ["size-16384"] }
 num-complex = "0.4.0"
 rodio = "0.15.0"
 # spectrum-analyzer = "1.2.3"
 ttspico = "0.1.5"
 
 [features]
+
+[patch.crates-io]
+microfft = { git = "https://gitlab.com/teskje/microfft-rs.git", rev = "f783b1effe66a24984f46b3fccca00d18fda5970" }

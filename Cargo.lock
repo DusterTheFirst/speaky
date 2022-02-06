@@ -929,9 +929,9 @@ dependencies = [
 [[package]]
 name = "microfft"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b04ffc2e74da5513185343835177bfd4adf718986185c6d81c2ae2c6ebc07637"
+source = "git+https://gitlab.com/teskje/microfft-rs.git?rev=f783b1effe66a24984f46b3fccca00d18fda5970#f783b1effe66a24984f46b3fccca00d18fda5970"
 dependencies = [
+ "cfg-if 1.0.0",
  "num-complex",
  "static_assertions",
 ]
