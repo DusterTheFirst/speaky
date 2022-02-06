@@ -1,19 +1,25 @@
+#![forbid(unsafe_code)]
+#![deny(clippy::unwrap_used)]
+
+use color_eyre::eyre::Context;
 use rodio::{OutputStream, Sink};
-use speaky::{load_language, setup_tts, synthesize};
+use speaky::tts::{load_language, setup_tts, synthesize};
 use std::io::{self, Write};
 
-fn main() {
+fn main() -> color_eyre::Result<()> {
+    color_eyre::install()?;
+
     let stdin = io::stdin();
     let mut stdout = io::stdout();
 
     let resources = loop {
-        write!(stdout, "language> ").expect("unable to write to stdout");
-        stdout.flush().expect("unable to write to stdout");
+        write!(stdout, "language> ").wrap_err("unable to write to stdout")?;
+        stdout.flush().wrap_err("unable to write to stdout")?;
 
         let mut lang = String::new();
         stdin
             .read_line(&mut lang)
-            .expect("unable to read input line");
+            .wrap_err("unable to read input line")?;
 
         let lang = lang.trim_end();
 
@@ -23,23 +29,24 @@ fn main() {
         }
     };
 
-    let mut engine = setup_tts(resources);
+    let mut engine = setup_tts(resources)?;
 
-    let (_stream, stream_handle) = OutputStream::try_default().unwrap();
-    let sink = Sink::try_new(&stream_handle).unwrap();
+    let (_stream, stream_handle) =
+        OutputStream::try_default().wrap_err("unable to open audio output stream")?;
+    let sink = Sink::try_new(&stream_handle).wrap_err("unable to create sink")?;
 
     loop {
-        write!(stdout, "synth> ").expect("unable to write to stdout");
-        stdout.flush().expect("unable to write to stdout");
+        write!(stdout, "synth> ").wrap_err("unable to write to stdout")?;
+        stdout.flush().wrap_err("unable to write to stdout")?;
 
         let mut line = String::new();
         stdin
             .read_line(&mut line)
-            .expect("unable to read input line");
+            .wrap_err("unable to read input line")?;
 
         let line = line.trim_end();
 
-        sink.append(synthesize(&mut engine, line));
+        sink.append(synthesize(&mut engine, line)?);
 
         sink.sleep_until_end();
     }

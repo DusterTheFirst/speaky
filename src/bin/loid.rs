@@ -1,5 +1,11 @@
-use std::{iter, sync::Arc, thread};
+use std::{
+    iter,
+    sync::Arc,
+    thread,
+    time::{Duration, Instant},
+};
 
+use color_eyre::eyre::Context;
 use eframe::{
     egui::{
         plot::{Bar, BarChart, Legend, Plot, Points, VLine, Value, Values},
@@ -11,22 +17,26 @@ use eframe::{
 use microfft::{complex::cfft_16384, real::rfft_16384};
 use num_complex::Complex;
 use rodio::{buffer::SamplesBuffer, OutputStream, Sink, Source};
-use speaky::{load_language, setup_tts, synthesize};
+use speaky::{
+    install_tracing,
+    tts::{load_language, setup_tts, synthesize},
+};
 
 const N: usize = 16384;
 
-fn main() {
+fn main() -> color_eyre::Result<()> {
+    color_eyre::install()?;
+    install_tracing()?;
+
     let (_stream, stream_handle) = OutputStream::try_default().unwrap();
 
     let sink = Sink::try_new(&stream_handle).unwrap();
 
     let resources = load_language("en-US").unwrap();
 
-    let mut engine = setup_tts(resources);
+    let mut engine = setup_tts(resources).wrap_err("unable to setup tts engine")?;
 
-    let speech = synthesize(&mut engine, "Some Body Once");
-
-    // let speech = SineWave::new(20.0).take_duration(Duration::from_secs_f32(1.0 / 10.0));
+    let speech = synthesize(&mut engine, "Some Body Once").wrap_err("unable to synthesize text")?;
 
     let sample_rate = speech.sample_rate();
     let samples: Vec<f32> = speech.convert_samples().collect();
@@ -90,6 +100,8 @@ fn main() {
             reconstructed_samples,
 
             spectrum: half_spectrum,
+
+            last_update: None,
         }),
         NativeOptions::default(),
     )
@@ -104,6 +116,8 @@ struct Loid {
     reconstructed_samples: Vec<f32>,
 
     spectrum: Box<[Complex<f32>; N / 2]>,
+
+    last_update: Option<Duration>,
 }
 
 impl Loid {
@@ -123,7 +137,18 @@ impl Loid {
 
 impl App for Loid {
     fn update(&mut self, ctx: &CtxRef, frame: &Frame) {
+        let update_start = Instant::now();
+
         CentralPanel::default().show(ctx, |ui| {
+            ui.label(format!(
+                "Last frame: {:.4} ms",
+                frame.info().cpu_usage.unwrap_or(0.0) * 1000.0
+            ));
+            ui.label(format!(
+                "Last update: {:.4} ms",
+                self.last_update.unwrap_or_default().as_secs_f64() * 1000.0
+            ));
+
             ui.horizontal_wrapped(|ui| {
                 if ui
                     .add_enabled(self.audio_sink.empty(), Button::new("Play Original"))
@@ -189,7 +214,7 @@ impl App for Loid {
                     );
                 });
 
-            Plot::new("reconstructed_samples")
+            Plot::new("samples")
                 .height(ui.available_height())
                 .center_y_axis(true)
                 .show(ui, |ui| {
@@ -208,6 +233,8 @@ impl App for Loid {
                     ui.vline(VLine::new(0.0 / self.sample_rate as f32));
                 });
         });
+
+        self.last_update.replace(update_start.elapsed());
     }
 
     fn name(&self) -> &str {

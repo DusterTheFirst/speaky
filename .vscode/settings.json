@@ -1,5 +1,10 @@
 {
     "cSpell.words": [
+        "cfft",
+        "eframe",
+        "egui",
+        "microfft",
+        "rfft",
         "rodio",
         "ttspico",
         "vline"
