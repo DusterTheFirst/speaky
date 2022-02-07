@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use std::{
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -10,16 +12,16 @@ use std::{
 use color_eyre::eyre::Context;
 use eframe::{
     egui::{
-        plot::{Bar, BarChart, Legend, Plot, Points, VLine, Value, Values},
-        Button, CentralPanel, Color32, ComboBox, CtxRef, Slider,
+        plot::{Bar, BarChart, Legend, Plot, Points, Text, VLine, Value, Values},
+        Align2, Button, CentralPanel, Color32, ComboBox, CtxRef, InnerResponse, Slider, TextStyle,
     },
     epi::{App, Frame},
     NativeOptions,
 };
-use num_complex::Complex;
 use rodio::{buffer::SamplesBuffer, OutputStream, Sink, Source};
 use speaky::{
     install_tracing,
+    spectrum::{full_spectrum, reconstruct_samples, shift_spectrum, spectrum},
     tts::{load_language, setup_tts, synthesize},
 };
 
@@ -40,99 +42,6 @@ fn main() -> color_eyre::Result<()> {
     let sample_rate = speech.sample_rate();
     let samples: Vec<f32> = speech.convert_samples().collect();
 
-    // let half_spectrum = {
-
-    // };
-
-    // let maximum = half_spectrum
-    //     .iter()
-    //     .enumerate()
-    //     .map(|(freq, complex)| (freq, complex.norm_sqr()))
-    //     .reduce(|(freq1, norm1), (freq2, norm2)| {
-    //         if norm1 > norm2 {
-    //             (freq1, norm1)
-    //         } else {
-    //             (freq2, norm2)
-    //         }
-    //     })
-    //     .map(|(freq, _)| freq)
-    //     .unwrap();
-
-    // dbg!(maximum);
-
-    // let scale = 2.0;
-
-    // let mut half_spectrum_rotate = Box::new([Complex::new(0.0, 0.0); N / 2]);
-    // half_spectrum_rotate[0] = half_spectrum[0];
-    // for (freq, component) in half_spectrum[1..].iter().copied().enumerate() {
-    //     let new_freq = (freq as f32 * scale).round() as usize;
-
-    //     if new_freq >= half_spectrum_rotate.len() {
-    //         break;
-    //     }
-
-    //     half_spectrum_rotate[new_freq] = component;
-    // }
-
-    // let half_spectrum = half_spectrum_rotate;
-
-    // let maximum = 440;
-
-    // half_spectrum[1..].rotate_right(maximum);
-    // half_spectrum[0].im = half_spectrum[1].re;
-    // half_spectrum[1..maximum].fill(Complex::new(0.0, 0.0));
-
-    // let maximum = half_spectrum
-    //     .iter()
-    //     .enumerate()
-    //     .map(|(freq, complex)| (freq, complex.norm_sqr()))
-    //     .reduce(|(freq1, norm1), (freq2, norm2)| {
-    //         if norm1 > norm2 {
-    //             (freq1, norm1)
-    //         } else {
-    //             (freq2, norm2)
-    //         }
-    //     })
-    //     .map(|(freq, _)| freq);
-
-    // dbg!(maximum);
-
-    // let full_spectrum = {
-    //     // The real-valued coefficient at the Nyquist frequency
-    //     // is packed into the imaginary part of the DC bin.
-    //     let real_at_nyquist = half_spectrum[0].im;
-    //     let dc = half_spectrum[0].re;
-
-    //     let half_spectrum = half_spectrum.iter().skip(1).copied();
-
-    //     iter::once(Complex::new(dc, 0.0))
-    //         .chain(half_spectrum.clone())
-    //         .chain(iter::once(Complex::new(real_at_nyquist, 0.0)))
-    //         .chain(half_spectrum.map(|complex| complex.conj()).rev())
-    //         .collect::<Vec<_>>()
-    // };
-
-    // let reconstructed_samples = {
-    //     let spectrum_conjugate = full_spectrum
-    //         .iter()
-    //         .map(|complex| Complex::new(complex.im, complex.re));
-
-    //     let mut fixed_sized_spectrum: Box<[Complex<f32>; N]> =
-    //         Box::new([Complex::new(0.0, 0.0); N]);
-
-    //     // Collect iterator into existing buffer
-    //     for (complex_in, complex_out) in spectrum_conjugate.zip(fixed_sized_spectrum.iter_mut()) {
-    //         *complex_out = complex_in;
-    //     }
-
-    //     let samples = cfft_16384(&mut fixed_sized_spectrum);
-
-    //     samples
-    //         .iter()
-    //         .map(|complex| complex.im / N as f32)
-    //         .collect()
-    // };
-
     eframe::run_native(
         Box::new(Loid {
             audio_sink: Arc::new(sink),
@@ -147,51 +56,12 @@ fn main() -> color_eyre::Result<()> {
             follow_playback: true,
 
             cursor: 0,
-            width: 256, // TODO: enum
+            width: 2048, // TODO: enum
+
+            shift: 1.0,
         }),
         NativeOptions::default(),
     )
-}
-
-fn spectrum(samples: &[f32], start: usize, width: usize) -> Box<[Complex<f32>]> {
-    assert!(
-        samples.len() >= width,
-        "fft requires at least {width} samples but was provided {}",
-        samples.len()
-    );
-    assert!(
-        start < samples.len() - width,
-        "start position is too large. {start} >= {}",
-        samples.len() - width
-    );
-
-    let samples: Box<[f32]> = Box::from(&samples[start..(start + width)]);
-    let samples = Box::leak(samples);
-
-    use microfft::real::*;
-
-    let spectrum = match width {
-        2 => rfft_2(samples.try_into().unwrap()) as &mut [Complex<f32>],
-        4 => rfft_4(samples.try_into().unwrap()) as &mut [Complex<f32>],
-        8 => rfft_8(samples.try_into().unwrap()) as &mut [Complex<f32>],
-        16 => rfft_16(samples.try_into().unwrap()) as &mut [Complex<f32>],
-        32 => rfft_32(samples.try_into().unwrap()) as &mut [Complex<f32>],
-        64 => rfft_64(samples.try_into().unwrap()) as &mut [Complex<f32>],
-        128 => rfft_128(samples.try_into().unwrap()) as &mut [Complex<f32>],
-        256 => rfft_256(samples.try_into().unwrap()) as &mut [Complex<f32>],
-        512 => rfft_512(samples.try_into().unwrap()) as &mut [Complex<f32>],
-        1024 => rfft_1024(samples.try_into().unwrap()) as &mut [Complex<f32>],
-        2048 => rfft_2048(samples.try_into().unwrap()) as &mut [Complex<f32>],
-        4096 => rfft_4096(samples.try_into().unwrap()) as &mut [Complex<f32>],
-        8192 => rfft_8192(samples.try_into().unwrap()) as &mut [Complex<f32>],
-        16384 => rfft_16384(samples.try_into().unwrap()) as &mut [Complex<f32>],
-        _ => unimplemented!("width must be a power of 2 between 2 and 16284"),
-    };
-
-    // This lets us reinterpret the box as complex numbers rather than
-    // the floats we passed in without copying the whole buffer
-    unsafe { Box::from_raw(spectrum) }
-    // The above should be sound since we just leaked this box lines before
 }
 
 struct Loid {
@@ -209,9 +79,15 @@ struct Loid {
 
     cursor: usize,
     width: usize,
+
+    shift: f32,
 }
 
 impl Loid {
+    fn freq_from_bucket(&self, bucket: usize) -> f64 {
+        bucket as f64 / self.width as f64 * self.sample_rate as f64
+    }
+
     fn play(&self, samples: &[f32], frame: Frame) {
         let duration = Duration::from_millis(10);
 
@@ -274,31 +150,36 @@ impl App for Loid {
                 ui.checkbox(&mut self.follow_playback, "FFT follows playback");
             });
 
-            let max_cursor = self.samples.len() - self.width - 1;
+            let InnerResponse { inner: cursor, .. } = ui.horizontal_wrapped(|ui| {
+                ComboBox::from_label("FFT window width")
+                    .selected_text(format!("{} samples", self.width))
+                    .show_ui(ui, |ui| {
+                        for width in 1..=14 {
+                            let width = 1 << width;
 
-            ui.add_enabled(
-                !self.follow_playback || self.audio_sink.empty(),
-                Slider::new(&mut self.cursor, 0..=max_cursor)
-                    .integer()
-                    .prefix("sample ")
-                    .text("FFT window start"),
-            );
+                            ui.selectable_value(&mut self.width, width, format!("{width}"));
+                        }
+                    });
 
-            let cursor = if self.follow_playback && !self.audio_sink.empty() {
-                self.playback_head.load(Ordering::SeqCst).min(max_cursor)
-            } else {
-                self.cursor
-            };
+                let max_cursor = self.samples.len() - self.width - 1;
+                self.cursor = self.cursor.min(max_cursor);
 
-            ComboBox::from_label("FFT window width")
-                .selected_text(format!("{} samples", self.width))
-                .show_ui(ui, |ui| {
-                    for width in 1..=14 {
-                        let width = 1 << width;
+                ui.add_enabled(
+                    !self.follow_playback || self.audio_sink.empty(),
+                    Slider::new(&mut self.cursor, 0..=max_cursor)
+                        .integer()
+                        .prefix("sample ")
+                        .text("FFT window start"),
+                );
 
-                        ui.selectable_value(&mut self.width, width, format!("{width}"));
-                    }
-                });
+                if self.follow_playback && !self.audio_sink.empty() {
+                    self.playback_head.load(Ordering::SeqCst).min(max_cursor)
+                } else {
+                    self.cursor
+                }
+            });
+
+            ui.add(Slider::new(&mut self.shift, 0.0..=5.0).text("Frequency shift"));
 
             Plot::new("samples")
                 .height(ui.available_height() / 2.0)
@@ -335,37 +216,115 @@ impl App for Loid {
                     ));
                 });
 
+            let spectrum = spectrum(self.samples.as_ref(), cursor, self.width);
+            let shifted_spectrum = shift_spectrum(&spectrum, self.shift);
+
+            Plot::new("window_samples")
+                .height(ui.available_height() / 2.0)
+                .center_y_axis(true)
+                .legend(Legend::default())
+                .show(ui, |ui| {
+                    ui.points(
+                        Points::new(Values::from_ys_f32(
+                            &self.samples[cursor..(cursor + self.width)],
+                        ))
+                        .name("Samples")
+                        .stems(0.0),
+                    );
+
+                    let full_spectrum = full_spectrum(&shifted_spectrum);
+                    let samples = reconstruct_samples(&full_spectrum, self.width);
+
+                    ui.points(
+                        Points::new(Values::from_ys_f32(&samples))
+                            .name("Shifted Sample")
+                            .stems(0.0),
+                    );
+                });
+
             Plot::new("frequencies")
                 .height(ui.available_height())
                 .legend(Legend::default())
+                .include_y(0.2)
                 .show(ui, |ui| {
-                    let spectrum = spectrum(self.samples.as_ref(), cursor, self.width);
+                    {
+                        let amplitudes = spectrum
+                            .iter()
+                            .map(|complex| complex.norm() / self.width as f32);
 
-                    let amplitudes = spectrum
-                        .iter()
-                        .map(|complex| complex.norm() / self.width as f32);
+                        ui.bar_chart(
+                            BarChart::new(
+                                amplitudes
+                                    .clone()
+                                    .enumerate()
+                                    .map(|(n, amp)| Bar::new(self.freq_from_bucket(n), amp as f64))
+                                    .collect(),
+                            )
+                            .width(self.freq_from_bucket(1))
+                            .name("Amplitude"),
+                        );
 
-                    // let phases = spectrum.iter().map(|complex| complex.arg());
+                        if let Some((bucket, max)) =
+                            amplitudes.enumerate().reduce(
+                                |one, two| {
+                                    if one.1 > two.1 {
+                                        one
+                                    } else {
+                                        two
+                                    }
+                                },
+                            )
+                        {
+                            ui.text(
+                                Text::new(
+                                    Value::new(self.freq_from_bucket(bucket), max),
+                                    format!("{:.2}Hz", self.freq_from_bucket(bucket)),
+                                )
+                                .style(TextStyle::Monospace)
+                                .anchor(Align2::CENTER_BOTTOM)
+                                .name("Maximum"),
+                            )
+                        }
+                    }
+                    {
+                        let amplitudes = shifted_spectrum
+                            .iter()
+                            .map(|complex| complex.norm() / self.width as f32);
 
-                    ui.bar_chart(
-                        BarChart::new(
-                            amplitudes
-                                .enumerate()
-                                .map(|(n, amp)| Bar::new(n as f64, amp as f64))
-                                .collect(),
-                        )
-                        .name("Amplitude"),
-                    );
+                        ui.bar_chart(
+                            BarChart::new(
+                                amplitudes
+                                    .clone()
+                                    .enumerate()
+                                    .map(|(n, amp)| Bar::new(self.freq_from_bucket(n), amp as f64))
+                                    .collect(),
+                            )
+                            .width(self.freq_from_bucket(1))
+                            .name("Shifted Amplitude"),
+                        );
 
-                    // ui.bar_chart(
-                    //     BarChart::new(
-                    //         phases
-                    //             .enumerate()
-                    //             .map(|(n, amp)| Bar::new(n as f64, amp as f64))
-                    //             .collect(),
-                    //     )
-                    //     .name("Phase"),
-                    // );
+                        if let Some((bucket, max)) =
+                            amplitudes.enumerate().reduce(
+                                |one, two| {
+                                    if one.1 > two.1 {
+                                        one
+                                    } else {
+                                        two
+                                    }
+                                },
+                            )
+                        {
+                            ui.text(
+                                Text::new(
+                                    Value::new(self.freq_from_bucket(bucket), max),
+                                    format!("{:.2}Hz", self.freq_from_bucket(bucket)),
+                                )
+                                .style(TextStyle::Monospace)
+                                .anchor(Align2::CENTER_BOTTOM)
+                                .name("Shifted Maximum"),
+                            )
+                        }
+                    }
                 });
         });
 

@@ -8,6 +8,7 @@ color-eyre = "0.6.0"
 eframe = "0.16.0"
 microfft = { version = "0.4.0", features = ["size-16384"] }
 num-complex = "0.4.0"
+paste = "1.0.6"
 rodio = { version = "0.15.0", default-features = false }
 tracing = "0.1.30"
 tracing-error = "0.2.0"
@@ -15,6 +16,9 @@ tracing-subscriber = { version = "0.3.8", features = ["env-filter"] }
 ttspico = "0.1.5"
 
 [features]
+
+[profile.dev]
+opt-level = 2
 
 [patch.crates-io]
 microfft = { git = "https://gitlab.com/teskje/microfft-rs.git", rev = "f783b1effe66a24984f46b3fccca00d18fda5970" }

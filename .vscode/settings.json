@@ -3,6 +3,7 @@
         "cfft",
         "eframe",
         "egui",
+        "hline",
         "microfft",
         "rfft",
         "rodio",
