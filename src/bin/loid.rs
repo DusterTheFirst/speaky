@@ -22,7 +22,7 @@ use num_complex::Complex;
 use rodio::{buffer::SamplesBuffer, OutputStream, Sink, Source};
 use speaky::{
     install_tracing,
-    spectrum::{reconstruct_samples, shift_spectrum, spectrum},
+    spectrum::{reconstruct_samples, scale_spectrum, shift_spectrum, spectrum},
     tts::{load_language, setup_tts, synthesize},
 };
 use tracing::warn;
@@ -53,6 +53,7 @@ fn main() -> color_eyre::Result<()> {
             samples,
             reconstructed_samples: Vec::new(),
             reconstructed_window_samples: Vec::new(),
+            reconstructed_work_buffer: Vec::new(),
 
             spectrum: Vec::new(),
             shifted_spectrum: Vec::new(),
@@ -68,6 +69,7 @@ fn main() -> color_eyre::Result<()> {
             width: 2048, // TODO: enum
 
             shift: 1.0,
+            is_scale: false,
         }),
         NativeOptions::default(),
     )
@@ -81,6 +83,7 @@ struct Loid {
     samples: Vec<f32>,
     reconstructed_samples: Vec<f32>,
     reconstructed_window_samples: Vec<f32>,
+    reconstructed_work_buffer: Vec<Complex<f32>>,
 
     spectrum: Vec<Complex<f32>>,
     shifted_spectrum: Vec<Complex<f32>>,
@@ -96,11 +99,14 @@ struct Loid {
     width: usize,
 
     shift: f32,
+    is_scale: bool,
 }
 
 impl Loid {
     fn reconstruct_samples(&mut self) {
         self.reconstructed_samples.clear();
+
+        let mut window_samples = Vec::new();
 
         for window_start in (0..self.samples.len()).step_by(self.width) {
             if window_start + self.width >= self.samples.len() {
@@ -111,13 +117,20 @@ impl Loid {
             }
 
             let spectrum = spectrum(&self.samples, window_start, self.width, &mut self.spectrum);
-            shift_spectrum(spectrum, &mut self.shifted_spectrum, self.shift);
+            if self.is_scale {
+                scale_spectrum(spectrum, &mut self.shifted_spectrum, self.shift);
+            } else {
+                shift_spectrum(spectrum, &mut self.shifted_spectrum, self.shift as usize)
+            }
 
             reconstruct_samples(
                 &self.shifted_spectrum,
-                &mut self.reconstructed_samples,
+                &mut self.reconstructed_work_buffer,
+                &mut window_samples,
                 self.width,
             );
+
+            self.reconstructed_samples.append(&mut window_samples);
         }
     }
 
@@ -264,6 +277,8 @@ impl App for Loid {
             });
 
             ui.horizontal_wrapped(|ui| {
+                ui.checkbox(&mut self.is_scale, "Use scaling");
+
                 ui.add(Slider::new(&mut self.shift, 0.0..=5.0).text("Frequency shift"));
 
                 if ui.button("Reconstruct Samples").clicked() {
@@ -329,7 +344,15 @@ impl App for Loid {
                 &mut self.spectrum,
             );
             // TODO: solve problem where you can use the shifted spectrum before calculation
-            shift_spectrum(&self.spectrum, &mut self.shifted_spectrum, self.shift);
+            if self.is_scale {
+                scale_spectrum(&self.spectrum, &mut self.shifted_spectrum, self.shift);
+            } else {
+                shift_spectrum(
+                    &self.spectrum,
+                    &mut self.shifted_spectrum,
+                    self.shift as usize,
+                )
+            }
 
             Plot::new("window_samples")
                 .height(ui.available_height() / 2.0)
@@ -346,9 +369,9 @@ impl App for Loid {
                         .stems(0.0),
                     );
 
-                    self.reconstructed_samples.clear();
                     reconstruct_samples(
                         &self.shifted_spectrum,
+                        &mut self.reconstructed_work_buffer,
                         &mut self.reconstructed_window_samples,
                         self.width,
                     );

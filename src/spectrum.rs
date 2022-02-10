@@ -19,27 +19,25 @@ macro_rules! variable_width_fft {
 
 // pub fn pitch_change(samples: &[f32])
 
-pub fn reconstruct_samples(full_spectrum: &[Complex<f32>], samples: &mut Vec<f32>, width: usize) {
-    samples.extend(
+pub fn reconstruct_samples(
+    full_spectrum: &[Complex<f32>],
+    work_buffer: &mut Vec<Complex<f32>>,
+    samples: &mut Vec<f32>,
+    width: usize,
+) {
+    work_buffer.clear();
+    work_buffer.extend(
         full_spectrum
             .iter()
-            .map(|complex| [complex.im, complex.re])
-            .flatten(),
+            .map(|complex| Complex::new(complex.im, complex.re)),
     );
+    samples.shrink_to_fit();
 
     {
-        // Safety: Complex<f32> is represented in memory the same as [f32; 2]
-        let spectrum = unsafe {
-            std::slice::from_raw_parts_mut(
-                samples.as_mut_ptr() as *mut Complex<f32>,
-                samples.len() / 2,
-            )
-        };
-
         use microfft::complex::*;
 
         variable_width_fft! {
-            for spectrum match width in cfft [
+            for work_buffer match width in cfft [
                 2, 4, 8, 16, 32, 64,
                 128, 256, 512, 1024,
                 2048, 4096, 8192, 16384
@@ -47,29 +45,44 @@ pub fn reconstruct_samples(full_spectrum: &[Complex<f32>], samples: &mut Vec<f32
         };
     };
 
-    for i in 0..(samples.len() / 2) {
-        samples[i] = samples[i * 2 + 1] / width as f32;
-    }
-
-    samples.drain(((samples.len() / 2) + 1)..);
-
+    samples.clear();
+    samples.extend(work_buffer.iter().map(|complex| complex.im / width as f32));
     samples.shrink_to_fit();
 }
 
 pub fn shift_spectrum(
     spectrum: &[Complex<f32>],
     shifted_spectrum: &mut Vec<Complex<f32>>,
-    scale: f32,
+    buckets: usize,
 ) {
     shifted_spectrum.clear();
-    shifted_spectrum.resize(spectrum.len(), Complex::new(0.0, 0.0));
-    shifted_spectrum.shrink_to_fit();
+
+    let zero_iter = std::iter::repeat(Complex::new(0.0, 0.0)).take(buckets);
+    let spectrum_iter = spectrum.iter().take(spectrum.len() / 2 - buckets).copied();
+
+    shifted_spectrum.extend(
+        zero_iter
+            .clone()
+            .chain(spectrum_iter.clone())
+            .chain(spectrum_iter.clone().rev())
+            .chain(zero_iter),
+    );
+}
+
+pub fn scale_spectrum(
+    spectrum: &[Complex<f32>],
+    scaled_spectrum: &mut Vec<Complex<f32>>,
+    scale: f32,
+) {
+    scaled_spectrum.clear();
+    scaled_spectrum.resize(spectrum.len(), Complex::new(0.0, 0.0));
+    scaled_spectrum.shrink_to_fit();
 
     let width = spectrum.len();
     let half_width = width / 2;
 
     // Copy DC offset
-    shifted_spectrum[0].re = spectrum[0].re;
+    scaled_spectrum[0].re = spectrum[0].re;
 
     // TODO: do something about the nyquist frequency (imaginary component of DC)
 
@@ -89,11 +102,11 @@ pub fn shift_spectrum(
         }
 
         // TODO: way to let the compiler know bounds checks are not needed?
-        shifted_spectrum[bucket] = component;
+        scaled_spectrum[bucket] = component;
     }
 
     // Split the spectrum at one over half since 1-nyquist is shared between the two
-    let (original, mirror) = shifted_spectrum.split_at_mut(half_width + 1);
+    let (original, mirror) = scaled_spectrum.split_at_mut(half_width + 1);
 
     // Skip the DC offset which is only present in the left hand side
     let original = original.iter().skip(1);
@@ -103,6 +116,7 @@ pub fn shift_spectrum(
 
     // Mirror changes to other half of spectrum
     for (original, mirror) in original.zip(mirror) {
+        // let gamma = scale * original.arg() * TODO:
         *mirror = original.conj();
     }
 }
