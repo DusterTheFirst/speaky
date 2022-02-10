@@ -1,5 +1,3 @@
-use std::iter;
-
 use num_complex::Complex;
 
 macro_rules! variable_width_fft {
@@ -11,7 +9,7 @@ macro_rules! variable_width_fft {
         match $width {
             $(
                 $num => paste::paste! {
-                    [<$type _ $num>]($samples.try_into().expect(concat!("spectrum.len() != ", $num))) as &mut [Complex<f32>]
+                    [<$type _ $num>](TryFrom::<&mut [Complex<f32>]>::try_from($samples).expect(concat!("spectrum.len() != ", $num))) as &mut [Complex<f32>]
                 },
             )+
             _ => unimplemented!("unsupported width"),
@@ -19,71 +17,104 @@ macro_rules! variable_width_fft {
     };
 }
 
-pub fn reconstruct_samples(full_spectrum: &[Complex<f32>], width: usize) -> Box<[f32]> {
-    let spectrum_conjugate = full_spectrum
-        .iter()
-        .map(|complex| Complex::new(complex.im, complex.re));
+// pub fn pitch_change(samples: &[f32])
 
-    let mut spectrum = Vec::new();
-    spectrum.extend(spectrum_conjugate);
+pub fn reconstruct_samples(full_spectrum: &[Complex<f32>], samples: &mut Vec<f32>, width: usize) {
+    samples.extend(
+        full_spectrum
+            .iter()
+            .map(|complex| [complex.im, complex.re])
+            .flatten(),
+    );
 
-    let spectrum = spectrum.as_mut_slice();
+    {
+        // Safety: Complex<f32> is represented in memory the same as [f32; 2]
+        let spectrum = unsafe {
+            std::slice::from_raw_parts_mut(
+                samples.as_mut_ptr() as *mut Complex<f32>,
+                samples.len() / 2,
+            )
+        };
 
-    use microfft::complex::*;
+        use microfft::complex::*;
 
-    let samples = variable_width_fft! {
-        for spectrum match width in cfft [
-            2, 4, 8, 16, 32, 64,
-            128, 256, 512, 1024,
-            2048, 4096, 8192, 16384
-        ]
+        variable_width_fft! {
+            for spectrum match width in cfft [
+                2, 4, 8, 16, 32, 64,
+                128, 256, 512, 1024,
+                2048, 4096, 8192, 16384
+            ]
+        };
     };
 
-    samples
-        .iter()
-        .map(|complex| complex.im / width as f32)
-        .collect()
-}
-
-pub fn full_spectrum(half_spectrum: &[Complex<f32>]) -> Box<[Complex<f32>]> {
-    // The real-valued coefficient at the Nyquist frequency
-    // is packed into the imaginary part of the DC bin.
-    let real_at_nyquist = half_spectrum[0].im;
-    let dc = half_spectrum[0].re;
-
-    let half_spectrum = half_spectrum.iter().skip(1).copied();
-
-    iter::once(Complex::new(dc, 0.0))
-        .chain(half_spectrum.clone())
-        .chain(iter::once(Complex::new(real_at_nyquist, 0.0)))
-        .chain(half_spectrum.rev().map(|complex| complex.conj()))
-        .collect()
-}
-
-pub fn shift_spectrum(half_spectrum: &[Complex<f32>], scale: f32) -> Box<[Complex<f32>]> {
-    let mut half_spectrum_rotate = vec![Complex::new(0.0, 0.0); half_spectrum.len()];
-
-    // Copy DC offset
-    half_spectrum_rotate[0] = half_spectrum[0];
-
-    // Iterate over all frequencies, saving them into the new spectrum
-    for (bucket, component) in half_spectrum.iter().copied().enumerate().skip(1) {
-        let bucket = (bucket as f32 * scale).round() as usize;
-
-        if let Some(new_component) = half_spectrum_rotate.get_mut(bucket) {
-            *new_component = component;
-        } else {
-            break;
-        }
+    for i in 0..(samples.len() / 2) {
+        samples[i] = samples[i * 2 + 1] / width as f32;
     }
 
-    // TODO: do something about the nyquist frequency (im comp of DC)
+    samples.drain(((samples.len() / 2) + 1)..);
 
-    half_spectrum_rotate.into_boxed_slice()
+    samples.shrink_to_fit();
+}
+
+pub fn shift_spectrum(
+    spectrum: &[Complex<f32>],
+    shifted_spectrum: &mut Vec<Complex<f32>>,
+    scale: f32,
+) {
+    shifted_spectrum.clear();
+    shifted_spectrum.resize(spectrum.len(), Complex::new(0.0, 0.0));
+    shifted_spectrum.shrink_to_fit();
+
+    let width = spectrum.len();
+    let half_width = width / 2;
+
+    // Copy DC offset
+    shifted_spectrum[0].re = spectrum[0].re;
+
+    // TODO: do something about the nyquist frequency (imaginary component of DC)
+
+    // Iterate over all real frequencies, saving them into the new spectrum
+    for (bucket, component) in spectrum
+        .iter()
+        .take(half_width)
+        .copied()
+        .enumerate()
+        .skip(1)
+    {
+        // TODO: non-integer scaling
+        let bucket = (bucket as f32 * scale).round() as usize;
+
+        if bucket > half_width {
+            break;
+        }
+
+        // TODO: way to let the compiler know bounds checks are not needed?
+        shifted_spectrum[bucket] = component;
+    }
+
+    // Split the spectrum at one over half since 1-nyquist is shared between the two
+    let (original, mirror) = shifted_spectrum.split_at_mut(half_width + 1);
+
+    // Skip the DC offset which is only present in the left hand side
+    let original = original.iter().skip(1);
+
+    // Reverse the order that we iterate through the mirror
+    let mirror = mirror.iter_mut().rev();
+
+    // Mirror changes to other half of spectrum
+    for (original, mirror) in original.zip(mirror) {
+        *mirror = original.conj();
+    }
 }
 
 // TODO: stop allocating boxes and allow user to provide a scratch buffer
-pub fn spectrum(samples: &[f32], start: usize, width: usize) -> Box<[Complex<f32>]> {
+// TODO: see if rfft would be worth using unsafe for over cfft
+pub fn spectrum<'sp>(
+    samples: &[f32],
+    start: usize,
+    width: usize,
+    spectrum: &'sp mut Vec<Complex<f32>>,
+) -> &'sp mut [Complex<f32>] {
     assert!(
         samples.len() >= width,
         "fft requires at least {width} samples but was provided {}",
@@ -95,21 +126,22 @@ pub fn spectrum(samples: &[f32], start: usize, width: usize) -> Box<[Complex<f32
         samples.len() - width
     );
 
-    // Stack allocate the samples so the originals are not mutated by the fft
-    let mut samples: Box<[f32]> = Box::from(&samples[start..(start + width)]);
-    let samples = samples.as_mut();
+    spectrum.clear();
+    spectrum.extend(
+        samples[start..(start + width)]
+            .iter()
+            .copied()
+            .map(|sample| Complex::new(sample, 0.0)),
+    );
+    spectrum.shrink_to_fit();
 
-    use microfft::real::*;
+    use microfft::complex::*;
 
-    let spectrum = variable_width_fft! {
-        for samples match width in rfft [
+    variable_width_fft! {
+        for spectrum match width in cfft [
             2, 4, 8, 16, 32, 64,
             128, 256, 512, 1024,
             2048, 4096, 8192, 16384
         ]
-    };
-
-    // Copy the reinterpreted buffer into a new box
-    // Unsafe could be used to get around the clone but it may not be worth it
-    Box::from(&spectrum[..])
+    }
 }

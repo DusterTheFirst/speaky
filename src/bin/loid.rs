@@ -12,18 +12,20 @@ use std::{
 use color_eyre::eyre::Context;
 use eframe::{
     egui::{
-        plot::{Bar, BarChart, Legend, Plot, Points, Text, VLine, Value, Values},
+        plot::{Bar, BarChart, Legend, Plot, PlotUi, Points, Text, VLine, Value, Values},
         Align2, Button, CentralPanel, Color32, ComboBox, CtxRef, InnerResponse, Slider, TextStyle,
     },
     epi::{App, Frame},
     NativeOptions,
 };
+use num_complex::Complex;
 use rodio::{buffer::SamplesBuffer, OutputStream, Sink, Source};
 use speaky::{
     install_tracing,
-    spectrum::{full_spectrum, reconstruct_samples, shift_spectrum, spectrum},
+    spectrum::{reconstruct_samples, shift_spectrum, spectrum},
     tts::{load_language, setup_tts, synthesize},
 };
+use tracing::warn;
 
 fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
@@ -47,13 +49,20 @@ fn main() -> color_eyre::Result<()> {
             audio_sink: Arc::new(sink),
 
             sample_rate,
+
             samples,
+            reconstructed_samples: Vec::new(),
+            reconstructed_window_samples: Vec::new(),
+
+            spectrum: Vec::new(),
+            shifted_spectrum: Vec::new(),
 
             last_update: None,
 
             playback_head: Arc::new(AtomicUsize::new(0)),
 
             follow_playback: true,
+            full_spectrum: true,
 
             cursor: 0,
             width: 2048, // TODO: enum
@@ -70,12 +79,18 @@ struct Loid {
     sample_rate: u32,
 
     samples: Vec<f32>,
+    reconstructed_samples: Vec<f32>,
+    reconstructed_window_samples: Vec<f32>,
+
+    spectrum: Vec<Complex<f32>>,
+    shifted_spectrum: Vec<Complex<f32>>,
 
     last_update: Option<Duration>,
 
     playback_head: Arc<AtomicUsize>,
 
     follow_playback: bool,
+    full_spectrum: bool,
 
     cursor: usize,
     width: usize,
@@ -84,6 +99,28 @@ struct Loid {
 }
 
 impl Loid {
+    fn reconstruct_samples(&mut self) {
+        self.reconstructed_samples.clear();
+
+        for window_start in (0..self.samples.len()).step_by(self.width) {
+            if window_start + self.width >= self.samples.len() {
+                let window = window_start..window_start + self.width;
+                warn!(?window, "skipping window");
+
+                break;
+            }
+
+            let spectrum = spectrum(&self.samples, window_start, self.width, &mut self.spectrum);
+            shift_spectrum(spectrum, &mut self.shifted_spectrum, self.shift);
+
+            reconstruct_samples(
+                &self.shifted_spectrum,
+                &mut self.reconstructed_samples,
+                self.width,
+            );
+        }
+    }
+
     fn freq_from_bucket(&self, bucket: usize) -> f64 {
         bucket as f64 / self.width as f64 * self.sample_rate as f64
     }
@@ -117,6 +154,43 @@ impl Loid {
             }
         });
     }
+
+    fn display_spectrum(&self, ui: &mut PlotUi, spectrum: &[Complex<f32>], title: &str) {
+        let spectrum = if self.full_spectrum {
+            spectrum
+        } else {
+            &spectrum[..self.width / 2]
+        };
+
+        let amplitudes = spectrum
+            .iter()
+            .map(|complex| complex.norm() / self.width as f32)
+            .enumerate();
+
+        ui.bar_chart(
+            BarChart::new(
+                amplitudes
+                    .clone()
+                    .map(|(n, amp)| Bar::new(self.freq_from_bucket(n), amp as f64))
+                    .collect(),
+            )
+            .width(self.freq_from_bucket(1))
+            .name(&title),
+        );
+
+        if let Some((bucket, max)) =
+            amplitudes.reduce(|one, two| if one.1 > two.1 { one } else { two })
+        {
+            ui.text(
+                Text::new(
+                    Value::new(self.freq_from_bucket(bucket), max),
+                    format!("{:.2}Hz", self.freq_from_bucket(bucket)),
+                )
+                .style(TextStyle::Monospace)
+                .anchor(Align2::CENTER_BOTTOM),
+            )
+        }
+    }
 }
 
 impl App for Loid {
@@ -145,6 +219,16 @@ impl App for Loid {
                     .clicked()
                 {
                     self.play(self.samples.as_ref(), frame.clone());
+                }
+
+                if ui
+                    .add_enabled(
+                        self.audio_sink.empty() && !self.reconstructed_samples.is_empty(),
+                        Button::new("Play Reconstructed"),
+                    )
+                    .clicked()
+                {
+                    self.play(self.reconstructed_samples.as_ref(), frame.clone());
                 }
 
                 ui.checkbox(&mut self.follow_playback, "FFT follows playback");
@@ -179,12 +263,22 @@ impl App for Loid {
                 }
             });
 
-            ui.add(Slider::new(&mut self.shift, 0.0..=5.0).text("Frequency shift"));
+            ui.horizontal_wrapped(|ui| {
+                ui.add(Slider::new(&mut self.shift, 0.0..=5.0).text("Frequency shift"));
+
+                if ui.button("Reconstruct Samples").clicked() {
+                    self.reconstruct_samples();
+                }
+            });
+
+            ui.checkbox(&mut self.full_spectrum, "Show full spectrum");
 
             Plot::new("samples")
-                .height(ui.available_height() / 2.0)
+                .height(ui.available_height() / 3.0)
                 .center_y_axis(true)
                 .legend(Legend::default())
+                .include_y(1.0)
+                .include_y(-1.0)
                 .show(ui, |ui| {
                     ui.points(
                         Points::new(Values::from_values_iter(
@@ -195,6 +289,18 @@ impl App for Loid {
                                 .map(|(n, x)| Value::new(n as f32 / self.sample_rate as f32, x)),
                         ))
                         .name("Original Samples")
+                        .stems(0.0),
+                    );
+
+                    ui.points(
+                        Points::new(Values::from_values_iter(
+                            self.reconstructed_samples
+                                .iter()
+                                .copied()
+                                .enumerate()
+                                .map(|(n, x)| Value::new(n as f32 / self.sample_rate as f32, x)),
+                        ))
+                        .name("Reconstructed Samples")
                         .stems(0.0),
                     );
 
@@ -216,13 +322,21 @@ impl App for Loid {
                     ));
                 });
 
-            let spectrum = spectrum(self.samples.as_ref(), cursor, self.width);
-            let shifted_spectrum = shift_spectrum(&spectrum, self.shift);
+            spectrum(
+                self.samples.as_ref(),
+                cursor,
+                self.width,
+                &mut self.spectrum,
+            );
+            // TODO: solve problem where you can use the shifted spectrum before calculation
+            shift_spectrum(&self.spectrum, &mut self.shifted_spectrum, self.shift);
 
             Plot::new("window_samples")
                 .height(ui.available_height() / 2.0)
                 .center_y_axis(true)
                 .legend(Legend::default())
+                .include_y(1.0)
+                .include_y(-1.0)
                 .show(ui, |ui| {
                     ui.points(
                         Points::new(Values::from_ys_f32(
@@ -232,11 +346,15 @@ impl App for Loid {
                         .stems(0.0),
                     );
 
-                    let full_spectrum = full_spectrum(&shifted_spectrum);
-                    let samples = reconstruct_samples(&full_spectrum, self.width);
+                    self.reconstructed_samples.clear();
+                    reconstruct_samples(
+                        &self.shifted_spectrum,
+                        &mut self.reconstructed_window_samples,
+                        self.width,
+                    );
 
                     ui.points(
-                        Points::new(Values::from_ys_f32(&samples))
+                        Points::new(Values::from_ys_f32(&self.reconstructed_window_samples))
                             .name("Shifted Sample")
                             .stems(0.0),
                     );
@@ -247,83 +365,12 @@ impl App for Loid {
                 .legend(Legend::default())
                 .include_y(0.2)
                 .show(ui, |ui| {
-                    {
-                        let amplitudes = spectrum
-                            .iter()
-                            .map(|complex| complex.norm() / self.width as f32);
+                    self.display_spectrum(ui, &self.spectrum, "Original");
 
-                        ui.bar_chart(
-                            BarChart::new(
-                                amplitudes
-                                    .clone()
-                                    .enumerate()
-                                    .map(|(n, amp)| Bar::new(self.freq_from_bucket(n), amp as f64))
-                                    .collect(),
-                            )
-                            .width(self.freq_from_bucket(1))
-                            .name("Amplitude"),
-                        );
+                    self.display_spectrum(ui, &self.shifted_spectrum, "Shifted");
 
-                        if let Some((bucket, max)) =
-                            amplitudes.enumerate().reduce(
-                                |one, two| {
-                                    if one.1 > two.1 {
-                                        one
-                                    } else {
-                                        two
-                                    }
-                                },
-                            )
-                        {
-                            ui.text(
-                                Text::new(
-                                    Value::new(self.freq_from_bucket(bucket), max),
-                                    format!("{:.2}Hz", self.freq_from_bucket(bucket)),
-                                )
-                                .style(TextStyle::Monospace)
-                                .anchor(Align2::CENTER_BOTTOM)
-                                .name("Maximum"),
-                            )
-                        }
-                    }
-                    {
-                        let amplitudes = shifted_spectrum
-                            .iter()
-                            .map(|complex| complex.norm() / self.width as f32);
-
-                        ui.bar_chart(
-                            BarChart::new(
-                                amplitudes
-                                    .clone()
-                                    .enumerate()
-                                    .map(|(n, amp)| Bar::new(self.freq_from_bucket(n), amp as f64))
-                                    .collect(),
-                            )
-                            .width(self.freq_from_bucket(1))
-                            .name("Shifted Amplitude"),
-                        );
-
-                        if let Some((bucket, max)) =
-                            amplitudes.enumerate().reduce(
-                                |one, two| {
-                                    if one.1 > two.1 {
-                                        one
-                                    } else {
-                                        two
-                                    }
-                                },
-                            )
-                        {
-                            ui.text(
-                                Text::new(
-                                    Value::new(self.freq_from_bucket(bucket), max),
-                                    format!("{:.2}Hz", self.freq_from_bucket(bucket)),
-                                )
-                                .style(TextStyle::Monospace)
-                                .anchor(Align2::CENTER_BOTTOM)
-                                .name("Shifted Maximum"),
-                            )
-                        }
+                    if self.full_spectrum {
+                        ui.vline(VLine::new(self.freq_from_bucket(self.width / 2)))
                     }
                 });
         });
