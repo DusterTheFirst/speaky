@@ -1,3 +1,5 @@
+use std::iter;
+
 use num_complex::Complex;
 
 macro_rules! variable_width_fft {
@@ -25,6 +27,12 @@ pub fn reconstruct_samples(
     samples: &mut Vec<f32>,
     width: usize,
 ) {
+    debug_assert_eq!(
+        full_spectrum.len(),
+        width,
+        "full spectrum width does not match fft width"
+    );
+
     work_buffer.clear();
     work_buffer.extend(
         full_spectrum
@@ -50,6 +58,7 @@ pub fn reconstruct_samples(
     samples.shrink_to_fit();
 }
 
+// TODO: signed shift?
 pub fn shift_spectrum(
     spectrum: &[Complex<f32>],
     shifted_spectrum: &mut Vec<Complex<f32>>,
@@ -57,14 +66,27 @@ pub fn shift_spectrum(
 ) {
     shifted_spectrum.clear();
 
-    let zero_iter = std::iter::repeat(Complex::new(0.0, 0.0)).take(buckets);
-    let spectrum_iter = spectrum.iter().take(spectrum.len() / 2 - buckets).copied();
+    // If the result would shift all components off, take a shortcut and just fill it with zeros
+    if buckets >= spectrum.len() / 2 {
+        shifted_spectrum.resize(spectrum.len(), Complex::new(0.0, 0.0));
+        return;
+    }
+
+    let zero_iter = iter::repeat(Complex::new(0.0, 0.0)).take(buckets);
+    let half_spectrum_length = spectrum.len() / 2 - buckets;
 
     shifted_spectrum.extend(
         zero_iter
             .clone()
-            .chain(spectrum_iter.clone())
-            .chain(spectrum_iter.clone().rev())
+            .chain(spectrum.iter().copied().take(half_spectrum_length + 1))
+            .chain(
+                spectrum
+                    .iter()
+                    .map(Complex::conj)
+                    .take(half_spectrum_length)
+                    .skip(1)
+                    .rev(),
+            )
             .chain(zero_iter),
     );
 }
@@ -79,7 +101,7 @@ pub fn scale_spectrum(
     scaled_spectrum.shrink_to_fit();
 
     let width = spectrum.len();
-    let half_width = width / 2;
+    let half_width = width / 2 + 1;
 
     // Copy DC offset
     scaled_spectrum[0].re = spectrum[0].re;
@@ -106,7 +128,7 @@ pub fn scale_spectrum(
     }
 
     // Split the spectrum at one over half since 1-nyquist is shared between the two
-    let (original, mirror) = scaled_spectrum.split_at_mut(half_width + 1);
+    let (original, mirror) = scaled_spectrum.split_at_mut(half_width);
 
     // Skip the DC offset which is only present in the left hand side
     let original = original.iter().skip(1);

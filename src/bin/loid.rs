@@ -64,6 +64,7 @@ fn main() -> color_eyre::Result<()> {
 
             follow_playback: true,
             full_spectrum: true,
+            phase: false,
 
             cursor: 0,
             width: 2048, // TODO: enum
@@ -94,6 +95,7 @@ struct Loid {
 
     follow_playback: bool,
     full_spectrum: bool,
+    phase: bool,
 
     cursor: usize,
     width: usize,
@@ -122,6 +124,8 @@ impl Loid {
             } else {
                 shift_spectrum(spectrum, &mut self.shifted_spectrum, self.shift as usize)
             }
+
+            self.shifted_spectrum[0] = Complex::new(0.0, 0.0);
 
             reconstruct_samples(
                 &self.shifted_spectrum,
@@ -175,9 +179,12 @@ impl Loid {
             &spectrum[..self.width / 2]
         };
 
+        let map_arg: &dyn Fn(&Complex<f32>) -> f32 = &|complex| complex.arg();
+        let map_norm: &dyn Fn(&Complex<f32>) -> f32 = &|complex| complex.norm() / self.width as f32;
+
         let amplitudes = spectrum
             .iter()
-            .map(|complex| complex.norm() / self.width as f32)
+            .map(if self.phase { map_arg } else { map_norm })
             .enumerate();
 
         ui.bar_chart(
@@ -286,7 +293,10 @@ impl App for Loid {
                 }
             });
 
-            ui.checkbox(&mut self.full_spectrum, "Show full spectrum");
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut self.full_spectrum, "Show full spectrum");
+                ui.checkbox(&mut self.phase, "Show phase");
+            });
 
             Plot::new("samples")
                 .height(ui.available_height() / 3.0)
@@ -350,7 +360,7 @@ impl App for Loid {
                 shift_spectrum(
                     &self.spectrum,
                     &mut self.shifted_spectrum,
-                    self.shift as usize,
+                    (self.shift as usize).saturating_sub(1),
                 )
             }
 
