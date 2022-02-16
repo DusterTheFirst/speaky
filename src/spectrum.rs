@@ -76,6 +76,8 @@ pub fn shift_spectrum(
     let zero_iter = iter::repeat(Complex::new(0.0, 0.0)).take(buckets);
     let half_spectrum_length = spectrum.len() / 2 - buckets;
 
+    let (second_half_skip, second_zero_skip) = if buckets == 0 { (1, 0) } else { (0, 1) };
+
     shifted_spectrum.extend(
         zero_iter
             .clone()
@@ -85,10 +87,10 @@ pub fn shift_spectrum(
                     .iter()
                     .map(Complex::conj)
                     .take(half_spectrum_length)
-                    .skip(1)
+                    .skip(second_half_skip)
                     .rev(),
             )
-            .chain(zero_iter),
+            .chain(zero_iter.skip(second_zero_skip)),
     );
 }
 

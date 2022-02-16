@@ -4,6 +4,7 @@ use color_eyre::eyre::Context;
 
 pub mod tts;
 pub mod spectrum;
+pub mod audio;
 
 pub fn install_tracing() -> color_eyre::Result<()> {
     use tracing_error::ErrorLayer;

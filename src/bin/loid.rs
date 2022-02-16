@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use color_eyre::eyre::Context;
+use cpal::SampleRate;
 use eframe::{
     egui::{
         plot::{Bar, BarChart, Legend, Plot, PlotUi, Points, Text, VLine, Value, Values},
@@ -19,9 +19,9 @@ use eframe::{
     NativeOptions,
 };
 use num_complex::Complex;
-use rodio::{buffer::SamplesBuffer, OutputStream, Sink, Source};
+use rodio::{buffer::SamplesBuffer, source::SineWave, OutputStream, Sink, Source};
 use speaky::{
-    install_tracing,
+    audio, install_tracing,
     spectrum::{reconstruct_samples, shift_spectrum, spectrum},
     tts::{load_language, setup_tts, synthesize},
 };
@@ -35,14 +35,17 @@ fn main() -> color_eyre::Result<()> {
 
     let sink = Sink::try_new(&stream_handle).unwrap();
 
-    let resources = load_language("en-US").unwrap();
+    // let resources = load_language("en-US").unwrap();
 
-    let mut engine = setup_tts(resources).wrap_err("unable to setup tts engine")?;
+    // let mut engine = setup_tts(resources).wrap_err("unable to setup tts engine")?;
 
-    let speech = synthesize(&mut engine, "Some Body Once").wrap_err("unable to synthesize text")?;
+    // let speech = synthesize(&mut engine, "Some Body Once").wrap_err("unable to synthesize text")?;
+    let speech = SineWave::new(440.0).take_duration(Duration::from_secs(2));
 
     let sample_rate = speech.sample_rate();
     let samples: Vec<f32> = speech.convert_samples().collect();
+
+    // let (samples, SampleRate(sample_rate)) = audio::input::h()?;
 
     eframe::run_native(
         Box::new(Loid {
@@ -141,7 +144,7 @@ impl Loid {
 
             self.reconstructed_samples.append(&mut window_samples);
 
-            self.shift += 500.0 * (self.width as f64 / self.samples.len() as f64) as f64;
+            // self.shift += 500.0 * (self.width as f64 / self.samples.len() as f64) as f64;
         }
     }
 
@@ -283,13 +286,22 @@ impl App for Loid {
                 let max_cursor = self.samples.len() - self.width - 1;
                 self.cursor = self.cursor.min(max_cursor);
 
-                ui.add_enabled(
-                    !self.follow_playback || self.audio_sink.empty(),
-                    Slider::new(&mut self.cursor, 0..=max_cursor)
-                        .integer()
-                        .prefix("sample ")
-                        .text("FFT window start"),
-                );
+                ui.add_enabled_ui(!self.follow_playback || self.audio_sink.empty(), |ui| {
+                    ui.add(
+                        Slider::new(&mut self.cursor, 0..=max_cursor)
+                            .integer()
+                            .prefix("sample ")
+                            .text("FFT window start"),
+                    );
+
+                    if ui.button("Previous").clicked() {
+                        self.cursor -= self.width;
+                    }
+
+                    if ui.button("Next").clicked() {
+                        self.cursor += self.width;
+                    }
+                });
 
                 if self.follow_playback && !self.audio_sink.empty() {
                     self.playback_head.load(Ordering::SeqCst).min(max_cursor)
