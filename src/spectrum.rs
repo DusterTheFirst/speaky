@@ -60,9 +60,10 @@ pub fn reconstruct_samples(
 
 // TODO: signed shift?
 pub fn shift_spectrum(
+    buckets: usize,
+
     spectrum: &[Complex<f32>],
     shifted_spectrum: &mut Vec<Complex<f32>>,
-    buckets: usize,
 ) {
     shifted_spectrum.clear();
 
@@ -92,9 +93,10 @@ pub fn shift_spectrum(
 }
 
 pub fn scale_spectrum(
+    scale: f32,
+
     spectrum: &[Complex<f32>],
     scaled_spectrum: &mut Vec<Complex<f32>>,
-    scale: f32,
 ) {
     scaled_spectrum.clear();
     scaled_spectrum.resize(spectrum.len(), Complex::new(0.0, 0.0));
@@ -146,9 +148,10 @@ pub fn scale_spectrum(
 // TODO: stop allocating boxes and allow user to provide a scratch buffer
 // TODO: see if rfft would be worth using unsafe for over cfft
 pub fn spectrum<'sp>(
-    samples: &[f32],
     start: usize,
     width: usize,
+
+    samples: &[f32],
     spectrum: &'sp mut Vec<Complex<f32>>,
 ) -> &'sp mut [Complex<f32>] {
     assert!(

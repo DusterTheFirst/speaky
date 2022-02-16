@@ -22,7 +22,7 @@ use num_complex::Complex;
 use rodio::{buffer::SamplesBuffer, OutputStream, Sink, Source};
 use speaky::{
     install_tracing,
-    spectrum::{reconstruct_samples, scale_spectrum, shift_spectrum, spectrum},
+    spectrum::{reconstruct_samples, shift_spectrum, spectrum},
     tts::{load_language, setup_tts, synthesize},
 };
 use tracing::warn;
@@ -69,7 +69,7 @@ fn main() -> color_eyre::Result<()> {
             cursor: 0,
             width: 2048, // TODO: enum
 
-            shift: 1.0,
+            shift: 0.0,
             is_scale: false,
         }),
         NativeOptions::default(),
@@ -100,7 +100,7 @@ struct Loid {
     cursor: usize,
     width: usize,
 
-    shift: f32,
+    shift: f64,
     is_scale: bool,
 }
 
@@ -118,14 +118,19 @@ impl Loid {
                 break;
             }
 
-            let spectrum = spectrum(&self.samples, window_start, self.width, &mut self.spectrum);
+            spectrum(window_start, self.width, &self.samples, &mut self.spectrum);
             if self.is_scale {
-                scale_spectrum(spectrum, &mut self.shifted_spectrum, self.shift);
-            } else {
-                shift_spectrum(spectrum, &mut self.shifted_spectrum, self.shift as usize)
-            }
+                todo!();
+                // scale_spectrum(spectrum, &mut self.shifted_spectrum, self.shift);
 
-            self.shifted_spectrum[0] = Complex::new(0.0, 0.0);
+                // self.shifted_spectrum[0] = Complex::new(0.0, 0.0);
+            } else {
+                shift_spectrum(
+                    self.bucket_from_freq(self.shift),
+                    &self.spectrum,
+                    &mut self.shifted_spectrum,
+                )
+            }
 
             reconstruct_samples(
                 &self.shifted_spectrum,
@@ -135,11 +140,17 @@ impl Loid {
             );
 
             self.reconstructed_samples.append(&mut window_samples);
+
+            self.shift += 500.0 * (self.width as f64 / self.samples.len() as f64) as f64;
         }
     }
 
     fn freq_from_bucket(&self, bucket: usize) -> f64 {
         bucket as f64 / self.width as f64 * self.sample_rate as f64
+    }
+
+    fn bucket_from_freq(&self, freq: f64) -> usize {
+        ((freq * self.width as f64) / self.sample_rate as f64).round() as usize
     }
 
     fn play(&self, samples: &[f32], frame: Frame) {
@@ -198,17 +209,21 @@ impl Loid {
             .name(&title),
         );
 
-        if let Some((bucket, max)) =
-            amplitudes.reduce(|one, two| if one.1 > two.1 { one } else { two })
-        {
-            ui.text(
-                Text::new(
-                    Value::new(self.freq_from_bucket(bucket), max),
-                    format!("{:.2}Hz", self.freq_from_bucket(bucket)),
+        if !self.phase {
+            if let Some((bucket, max)) =
+                amplitudes
+                    .take(self.width / 2)
+                    .reduce(|one, two| if one.1 > two.1 { one } else { two })
+            {
+                ui.text(
+                    Text::new(
+                        Value::new(self.freq_from_bucket(bucket), max),
+                        format!("{:.2}Hz", self.freq_from_bucket(bucket)),
+                    )
+                    .style(TextStyle::Monospace)
+                    .anchor(Align2::CENTER_BOTTOM),
                 )
-                .style(TextStyle::Monospace)
-                .anchor(Align2::CENTER_BOTTOM),
-            )
+            }
         }
     }
 }
@@ -286,7 +301,11 @@ impl App for Loid {
             ui.horizontal_wrapped(|ui| {
                 ui.checkbox(&mut self.is_scale, "Use scaling");
 
-                ui.add(Slider::new(&mut self.shift, 0.0..=5.0).text("Frequency shift"));
+                ui.add(
+                    Slider::new(&mut self.shift, 0.0..=1000.0)
+                        .suffix(" Hz")
+                        .text("Frequency shift"),
+                );
 
                 if ui.button("Reconstruct Samples").clicked() {
                     self.reconstruct_samples();
@@ -348,19 +367,20 @@ impl App for Loid {
                 });
 
             spectrum(
-                self.samples.as_ref(),
                 cursor,
                 self.width,
+                self.samples.as_ref(),
                 &mut self.spectrum,
             );
             // TODO: solve problem where you can use the shifted spectrum before calculation
             if self.is_scale {
-                scale_spectrum(&self.spectrum, &mut self.shifted_spectrum, self.shift);
+                todo!();
+                // scale_spectrum(&self.spectrum, &mut self.shifted_spectrum, self.shift);
             } else {
                 shift_spectrum(
+                    self.bucket_from_freq(self.shift),
                     &self.spectrum,
                     &mut self.shifted_spectrum,
-                    (self.shift as usize).saturating_sub(1),
                 )
             }
 
