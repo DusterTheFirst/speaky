@@ -1,26 +1,49 @@
-use std::iter;
+use std::{iter, ops::Range};
 
 use num_complex::Complex;
 
-macro_rules! variable_width_fft {
-    (
-        for $samples:ident match $width:ident in $type:ident [
-            $($num:literal),+
-        ]
-    ) => {
-        match $width {
-            $(
-                $num => paste::paste! {
-                    [<$type _ $num>](TryFrom::<&mut [Complex<f32>]>::try_from($samples).expect(concat!("spectrum.len() != ", $num))) as &mut [Complex<f32>]
-                },
-            )+
-            _ => unimplemented!("unsupported width"),
-        }
-    };
+use crate::spectrum::fft::cfft;
+
+mod fft {
+    use num_complex::Complex;
+
+    macro_rules! variable_width_fft {
+        (
+            use $algor:path;
+
+            match $samples:ident in [
+                $($num:literal),+
+            ]
+        ) => {
+            match $samples.len() {
+                $(
+                    $num => paste::paste! {{
+                        [<$algor _ $num>](TryFrom::<&mut [Complex<f32>]>::try_from($samples).expect(concat!("spectrum.len() != ", $num))) as &mut [Complex<f32>]
+                    }},
+                )+
+                _ => unimplemented!("unsupported width"),
+            }
+        };
+    }
+
+    pub fn cfft(samples: &mut [Complex<f32>]) {
+        use microfft::complex::*;
+
+        variable_width_fft! {
+            use cfft;
+
+            match samples in [
+                2, 4, 8, 16, 32, 64,
+                128, 256, 512, 1024,
+                2048, 4096, 8192, 16384
+            ]
+        };
+    }
 }
 
 // pub fn pitch_change(samples: &[f32])
 
+#[deprecated]
 pub fn reconstruct_samples(
     full_spectrum: &[Complex<f32>],
     work_buffer: &mut Vec<Complex<f32>>,
@@ -41,17 +64,7 @@ pub fn reconstruct_samples(
     );
     samples.shrink_to_fit();
 
-    {
-        use microfft::complex::*;
-
-        variable_width_fft! {
-            for work_buffer match width in cfft [
-                2, 4, 8, 16, 32, 64,
-                128, 256, 512, 1024,
-                2048, 4096, 8192, 16384
-            ]
-        };
-    };
+    cfft(work_buffer);
 
     samples.clear();
     samples.extend(work_buffer.iter().map(|complex| complex.im / width as f32));
@@ -59,6 +72,7 @@ pub fn reconstruct_samples(
 }
 
 // TODO: signed shift?
+#[deprecated]
 pub fn shift_spectrum(
     buckets: usize,
 
@@ -94,6 +108,7 @@ pub fn shift_spectrum(
     );
 }
 
+#[deprecated]
 pub fn scale_spectrum(
     scale: f32,
 
@@ -147,42 +162,137 @@ pub fn scale_spectrum(
     }
 }
 
-// TODO: stop allocating boxes and allow user to provide a scratch buffer
-// TODO: see if rfft would be worth using unsafe for over cfft
-pub fn spectrum<'sp>(
-    start: usize,
+pub struct Spectrum<'analyzer, 'waveform> {
     width: usize,
+    buckets: &'analyzer [Complex<f32>],
+    waveform: &'waveform Waveform,
+}
 
-    samples: &[f32],
-    spectrum: &'sp mut Vec<Complex<f32>>,
-) -> &'sp mut [Complex<f32>] {
-    assert!(
-        samples.len() >= width,
-        "fft requires at least {width} samples but was provided {}",
-        samples.len()
-    );
-    assert!(
-        start < samples.len() - width,
-        "start position is too large. {start} >= {}",
-        samples.len() - width
-    );
+impl<'a, 'w> Spectrum<'a, 'w> {
+    pub fn width(&self) -> usize {
+        self.width
+    }
 
-    spectrum.clear();
-    spectrum.extend(
-        samples[start..(start + width)]
+    pub fn buckets(&self) -> &[Complex<f32>] {
+        self.buckets
+    }
+
+    pub fn amplitudes(&self) -> impl Iterator<Item = f32> + '_ {
+        self.buckets
             .iter()
-            .copied()
-            .map(|sample| Complex::new(sample, 0.0)),
-    );
-    spectrum.shrink_to_fit();
+            .map(|complex| complex.norm() / self.width as f32)
+    }
 
-    use microfft::complex::*;
+    pub fn phases(&self) -> impl Iterator<Item = f32> + '_ {
+        self.buckets.iter().map(|complex| complex.arg())
+    }
 
-    variable_width_fft! {
-        for spectrum match width in cfft [
-            2, 4, 8, 16, 32, 64,
-            128, 256, 512, 1024,
-            2048, 4096, 8192, 16384
-        ]
+    pub fn freq_from_bucket(&self, bucket: usize) -> f64 {
+        bucket as f64 / self.width as f64 * self.waveform.sample_rate as f64
+    }
+
+    pub fn bucket_from_freq(&self, freq: f64) -> usize {
+        ((freq * self.width as f64) / self.waveform.sample_rate as f64).round() as usize
+    }
+
+    // FIXME: probably wrong
+    // TODO: signed shift?
+    // pub fn shift(&mut self, range: Range<usize>, shift: usize) {
+    //     let half_spectrum = self.buckets.len() / 2;
+    //     let width_to_copy = half_spectrum - shift;
+
+    //     // Shift real half right
+    //     self.buckets.copy_within(0..width_to_copy, shift);
+
+    //     // Shift imaginary half left
+    //     self.buckets
+    //         .copy_within((half_spectrum + width_to_copy).., half_spectrum);
+    // }
+}
+
+pub struct Waveform {
+    samples: Vec<f32>,
+    sample_rate: u32,
+}
+
+impl Waveform {
+    pub fn new(samples: Vec<f32>, sample_rate: u32) -> Self {
+        Self {
+            samples,
+            sample_rate,
+        }
+    }
+
+    pub fn samples(&self) -> &[f32] {
+        &self.samples
+    }
+
+    pub fn len(&self) -> usize {
+        self.samples.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.samples.is_empty()
+    }
+
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    pub fn time_from_sample(&self, sample: usize) -> f32 {
+        sample as f32 / self.sample_rate as f32
+    }
+
+    pub fn time_domain(&self) -> impl Iterator<Item = (f32, f32)> + '_ {
+        self.samples
+            .iter()
+            .enumerate()
+            .map(|(sample, x)| (self.time_from_sample(sample), *x))
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct WaveformAnalyzer {
+    // Scratch buffer for dealing with complex numbers
+    spectrum_buffer: Vec<Complex<f32>>,
+}
+
+impl WaveformAnalyzer {
+    // TODO: see if rfft would be worth using unsafe for over cfft
+    // TODO: windowing functions
+    pub fn spectrum<'analyzer, 'waveform>(
+        &'analyzer mut self,
+        waveform: &'waveform Waveform,
+        range: Range<usize>,
+    ) -> Spectrum<'analyzer, 'waveform> {
+        debug_assert!(
+            range.start < range.end,
+            "range end must be greater than range start"
+        );
+
+        let width = range.len();
+        let width = width.next_power_of_two();
+
+        // Resize the spectrum buffer to fit the
+        self.spectrum_buffer.clear();
+
+        // Copy samples into the spectrum, filling any extra space with zeros
+        self.spectrum_buffer.extend(
+            waveform.samples[range]
+                .iter()
+                .copied()
+                .chain(iter::repeat(0.0))
+                .map(|sample| Complex::new(sample, 0.0))
+                .take(width),
+        );
+
+        // Perform the FFT based on the calculated width
+        cfft(&mut self.spectrum_buffer);
+
+        Spectrum {
+            buckets: &self.spectrum_buffer,
+            waveform,
+            width,
+        }
     }
 }
