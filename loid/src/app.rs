@@ -1,7 +1,6 @@
 #![forbid(unsafe_code)]
 
 use std::{
-    iter,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -36,6 +35,7 @@ pub struct Loid {
     follow_playback: bool,
     full_spectrum: bool,
     phase: bool,
+    decibels: bool,
 
     cursor: usize,
     fft_width: u8,
@@ -59,7 +59,7 @@ impl Loid {
         // let mut engine = setup_tts(resources).wrap_err("unable to setup tts engine")?;
 
         // let speech = synthesize(&mut engine, "Some Body Once").wrap_err("unable to synthesize text")?;
-        let speech = SineWave::new(120.0).take_duration(Duration::from_secs(1));
+        let speech = SineWave::new(120.0).take_duration(Duration::from_millis(300));
 
         let sample_rate = speech.sample_rate();
         let samples: Vec<f32> = speech.convert_samples().collect();
@@ -78,6 +78,7 @@ impl Loid {
             follow_playback: true,
             full_spectrum: false,
             phase: false,
+            decibels: false,
 
             cursor: 0,
             fft_width: 11,
@@ -167,25 +168,37 @@ impl Loid {
         title: &str,
         full_spectrum: bool,
         phase: bool,
+        decibels: bool,
     ) {
         // TODO: DECIBELS
 
         #[inline(always)]
         fn map(
             iterator: impl Iterator<Item = f32>,
-            freq_from_bucket: impl Fn(usize) -> f64,
+            freq: impl Fn(usize) -> f64,
+            db: impl Fn(f32) -> f32,
         ) -> Vec<Bar> {
             iterator
                 .enumerate()
-                .map(|(bucket, mag)| Bar::new(freq_from_bucket(bucket), mag as f64))
+                .map(|(bucket, mag)| Bar::new(freq(bucket), db(mag) as f64))
                 .collect()
         }
 
+        let db = |mag: f32| -> f32 {
+            if decibels {
+                20.0 * if mag == 0.0 { 0.0 } else { mag.log10() }
+            } else {
+                mag
+            }
+        };
+
+        let freq = |b| spectrum.freq_from_bucket(b);
+
         let buckets = match (phase, full_spectrum) {
-            (true, true) => map(spectrum.phases(), |b| spectrum.freq_from_bucket(b)),
-            (true, false) => map(spectrum.phases_real(), |b| spectrum.freq_from_bucket(b)),
-            (false, true) => map(spectrum.amplitudes(), |b| spectrum.freq_from_bucket(b)),
-            (false, false) => map(spectrum.amplitudes_real(), |b| spectrum.freq_from_bucket(b)),
+            (true, true) => map(&mut spectrum.phases(), freq, db),
+            (true, false) => map(spectrum.phases_real(), freq, db),
+            (false, true) => map(spectrum.amplitudes(), freq, db),
+            (false, false) => map(spectrum.amplitudes_real(), freq, db),
         };
 
         ui.bar_chart(
@@ -199,7 +212,7 @@ impl Loid {
                 let freq = spectrum.freq_from_bucket(bucket);
 
                 ui.text(
-                    Text::new(Value::new(freq, max), format!("{:.2}Hz", freq))
+                    Text::new(Value::new(freq, db(max)), format!("{:.2}Hz", freq))
                         .style(TextStyle::Monospace)
                         .anchor(Align2::CENTER_BOTTOM),
                 )
@@ -264,9 +277,13 @@ impl App for Loid {
                     ui.heading("FFT");
                     ui.label("FFT Width");
                     ui.add(
-                        Slider::new(&mut self.fft_width, 1..=14)
-                            .prefix("2^")
-                            .suffix(" samples"),
+                        Slider::new(
+                            &mut self.fft_width,
+                            1..=(self.waveform.len().next_power_of_two().trailing_zeros() as u8
+                                - 1),
+                        )
+                        .prefix("2^")
+                        .suffix(" samples"),
                     );
 
                     // Ensure the window width is always <= fft_width
@@ -286,9 +303,13 @@ impl App for Loid {
                     });
 
                     ui.label("Hop Fraction");
-                    ui.add(Slider::new(&mut self.hop_frac, 1..=16));
+                    ui.add(
+                        Slider::new(&mut self.hop_frac, 1..=16)
+                            .prefix("1/")
+                            .logarithmic(true),
+                    );
 
-                    let max_cursor = self.waveform.len() - self.window_width - 1;
+                    let max_cursor = self.waveform.len() - (1 << self.fft_width) - 1;
                     self.cursor = self.cursor.min(max_cursor);
 
                     ui.label("Window Start");
@@ -326,6 +347,7 @@ impl App for Loid {
                 ui.horizontal_wrapped(|ui| {
                     ui.checkbox(&mut self.full_spectrum, "Show full spectrum");
                     ui.checkbox(&mut self.phase, "Show phase");
+                    ui.checkbox(&mut self.decibels, "Decibels");
                 });
             });
         });
@@ -342,11 +364,16 @@ impl App for Loid {
         let fft_width = 1 << self.fft_width;
 
         // Get the slice of the waveform to work on
-        let waveform = self.waveform.slice(cursor..(cursor + fft_width));
+        let waveform = self.waveform.slice(cursor..(cursor + self.window_width));
 
-        let spectrum = waveform.spectrum(self.window, self.window_width);
+        // Get the frequency spectrum of the waveform
+        let spectrum = waveform.spectrum(self.window, fft_width);
 
+        // Shift the spectrum
         let shifted_spectrum = spectrum.shift(spectrum.bucket_from_freq(self.shift));
+
+        let reconstructed = shifted_spectrum.waveform();
+        let reconstructed = reconstructed.slice(..self.window_width);
 
         TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.label(format!(
@@ -369,17 +396,13 @@ impl App for Loid {
                         Points::new(Values::from_values_iter(
                             self.waveform.time_domain().map(|(x, y)| Value::new(x, y)),
                         ))
-                        .name("Original Samples")
+                        .name("Original samples")
                         .stems(0.0),
                     );
 
                     // ui.points(
                     //     Points::new(Values::from_values_iter(
-                    //         self.reconstructed_samples
-                    //             .iter()
-                    //             .copied()
-                    //             .enumerate()
-                    //             .map(|(n, x)| Value::new(n as f32 / self.sample_rate as f32, x)),
+                    //         reconstructed.time_domain().map(|(x, y)| Value::new(x, y)),
                     //     ))
                     //     .name("Reconstructed Samples")
                     //     .stems(0.0),
@@ -389,13 +412,13 @@ impl App for Loid {
                         VLine::new(self.waveform.time_from_sample(cursor))
                             .color(Color32::DARK_GREEN)
                             .width(2.5)
-                            .name("Start of Window"),
+                            .name("Start of window"),
                     );
                     ui.vline(
                         VLine::new(self.waveform.time_from_sample(cursor + self.window_width))
                             .color(Color32::DARK_RED)
                             .width(1.5)
-                            .name("End of Window"),
+                            .name("End of window"),
                     );
                     ui.vline(
                         VLine::new(
@@ -403,7 +426,7 @@ impl App for Loid {
                                 .time_from_sample(cursor + self.window_width / self.hop_frac),
                         )
                         .color(Color32::GOLD)
-                        .name("Start of Next Window"),
+                        .name("Start of next window"),
                     );
                     ui.vline(
                         VLine::new(
@@ -411,7 +434,7 @@ impl App for Loid {
                                 .time_from_sample(self.playback_head.load(Ordering::SeqCst)),
                         )
                         .color(Color32::LIGHT_BLUE)
-                        .name("Playback Head"),
+                        .name("Playback head"),
                     );
                 });
 
@@ -424,7 +447,7 @@ impl App for Loid {
                 .show(ui, |ui| {
                     ui.points(
                         Points::new(Values::from_ys_f32(waveform.samples()))
-                            .name("Samples")
+                            .name("Original Samples")
                             .stems(0.0),
                     );
 
@@ -432,10 +455,8 @@ impl App for Loid {
                         Line::new(Values::from_values_iter(
                             self.window
                                 .into_iter(self.window_width)
-                                .chain(iter::repeat(0.0))
                                 .enumerate()
-                                .map(|(i, w)| Value::new(i as f32, w))
-                                .take(fft_width),
+                                .map(|(i, w)| Value::new(i as f32, w)),
                         ))
                         .name("Window"),
                     );
@@ -449,49 +470,50 @@ impl App for Loid {
                                 .enumerate()
                                 .map(|(i, (sample, w))| Value::new(i as f32, w * sample)),
                         ))
-                        .name("Windowed Samples")
+                        .name("Windowed samples")
                         .stems(0.0),
                     );
 
-                    // reconstruct_samples(
-                    //     &self.shifted_spectrum,
-                    //     &mut self.reconstructed_work_buffer,
-                    //     &mut self.reconstructed_window_samples,
-                    //     self.width,
-                    // );
+                    ui.points(
+                        Points::new(Values::from_ys_f32(reconstructed.samples()))
+                            .name("Shifted samples")
+                            .stems(0.0),
+                    );
 
-                    // ui.points(
-                    //     Points::new(Values::from_ys_f32(&self.reconstructed_window_samples))
-                    //         .name("Shifted Sample")
-                    //         .stems(0.0),
-                    // );
+                    ui.vline(
+                        VLine::new((self.window_width / self.hop_frac) as f32)
+                            .name("Start of next window"),
+                    );
                 });
 
             Plot::new("frequencies")
                 .height(ui.available_height())
                 .legend(Legend::default())
-                .include_y(0.2)
+                .center_y_axis(true)
+                .include_x(fft_width as f64)
                 .show(ui, |ui| {
                     Self::display_spectrum(
                         ui,
                         &spectrum,
-                        "Frequency Spectrum",
+                        "Frequency spectrum",
                         self.full_spectrum,
                         self.phase,
+                        self.decibels,
                     );
 
                     Self::display_spectrum(
                         ui,
                         &shifted_spectrum,
-                        "Shifted Frequency Spectrum",
+                        "Shifted frequency spectrum",
                         self.full_spectrum,
                         self.phase,
+                        self.decibels,
                     );
                 });
         });
     }
 
     fn name(&self) -> &str {
-        "Shitty Loid"
+        "Fun with FFT"
     }
 }

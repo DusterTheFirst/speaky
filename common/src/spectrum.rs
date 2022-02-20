@@ -5,6 +5,7 @@ use std::{
     fmt::{self, Display},
     iter,
     ops::Range,
+    slice::SliceIndex,
 };
 
 use num_complex::Complex;
@@ -180,6 +181,7 @@ fn wrap_phase(phase: f32) -> f32 {
     }
 }
 
+#[derive(Debug)]
 pub struct Spectrum<'waveform> {
     width: usize,
     buckets: Box<[Complex<f32>]>,
@@ -247,6 +249,7 @@ impl<'w> Spectrum<'w> {
     }
 
     // TODO: signed shift?
+    #[must_use = "shift creates a new spectrum"]
     pub fn shift(&self, shift: usize) -> Spectrum<'w> {
         let half_spectrum = self.width / 2;
 
@@ -261,8 +264,30 @@ impl<'w> Spectrum<'w> {
                 .collect(),
         }
     }
+
+    #[must_use]
+    pub fn waveform(&self) -> Waveform<'static> {
+        let mut spectrum = self
+            .buckets
+            .iter()
+            .map(|complex| Complex::new(complex.im, complex.re))
+            .collect::<Vec<_>>();
+
+        cfft(&mut spectrum);
+
+        Waveform {
+            sample_rate: self.waveform.sample_rate,
+            samples: Cow::Owned(
+                spectrum
+                    .into_iter()
+                    .map(|complex| complex.im / self.width as f32)
+                    .collect(),
+            ),
+        }
+    }
 }
 
+#[derive(Debug)]
 pub struct Waveform<'s> {
     samples: Cow<'s, [f32]>,
     sample_rate: u32,
@@ -276,7 +301,7 @@ impl Waveform<'_> {
         }
     }
 
-    pub fn slice(&self, range: Range<usize>) -> Waveform {
+    pub fn slice(&self, range: impl SliceIndex<[f32], Output = [f32]>) -> Waveform {
         Waveform {
             sample_rate: self.sample_rate,
             samples: Cow::Borrowed(&self.samples[range]),
@@ -313,27 +338,29 @@ impl Waveform<'_> {
 
 impl Waveform<'_> {
     // TODO: see if rfft would be worth using unsafe for over cfft
-    pub fn spectrum(&self, window: Window, window_width: usize) -> Spectrum {
-        debug_assert!(
-            self.len() >= window_width,
-            "not enough samples provided. expected at least {window_width}, got {}",
+    #[must_use]
+    pub fn spectrum(&self, window: Window, fft_width: usize) -> Spectrum {
+        assert!(
+            self.len() <= fft_width,
+            "{} is too many samples for a fft of width {fft_width}",
             self.len()
         );
         assert!(
-            self.len().is_power_of_two(),
-            "waveform length must be a power of two"
+            fft_width.is_power_of_two(),
+            "fft width length must be a power of two"
         );
 
-        let window = window.into_iter(window_width);
+        let window = window.into_iter(self.len());
 
         // Copy samples into the spectrum, filling any extra space with zeros
         let mut buckets = self
             .samples()
             .iter()
             .copied()
-            .zip(window.chain(iter::repeat(0.0)))
+            .zip(window)
             .map(|(sample, scale)| Complex::new(sample * scale, 0.0))
-            .take(self.len())
+            .chain(iter::repeat(Complex::new(0.0, 0.0)))
+            .take(fft_width)
             .collect::<Box<_>>();
 
         // Perform the FFT based on the calculated width
@@ -341,7 +368,7 @@ impl Waveform<'_> {
 
         Spectrum {
             buckets,
-            width: self.len(),
+            width: fft_width,
             waveform: self,
         }
     }
@@ -375,6 +402,7 @@ impl Window {
     }
 }
 
+#[derive(Debug)]
 pub struct WindowIter {
     range: Range<usize>,
     width: usize,

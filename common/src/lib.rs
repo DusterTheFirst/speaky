@@ -1,4 +1,5 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
+#![warn(missing_copy_implementations, missing_debug_implementations)]
 
 use color_eyre::eyre::Context;
 

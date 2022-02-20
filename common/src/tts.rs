@@ -48,6 +48,7 @@ pub fn setup_tts(
     unsafe { Voice::create_engine(voice) }.map_err(|err| eyre!("failed to create engine: {err}"))
 }
 
+#[derive(Debug)]
 pub struct TTSResources {
     text_analysis: String,
     speech_generation: String,
