@@ -180,19 +180,19 @@ fn wrap_phase(phase: f32) -> f32 {
     }
 }
 
-pub struct Spectrum<'analyzer, 'waveform> {
+pub struct Spectrum<'waveform> {
     width: usize,
-    buckets: &'analyzer mut [Complex<f32>],
+    buckets: Box<[Complex<f32>]>,
     waveform: &'waveform Waveform<'waveform>,
 }
 
-impl<'a, 'w> Spectrum<'a, 'w> {
+impl<'w> Spectrum<'w> {
     pub fn width(&self) -> usize {
         self.width
     }
 
     pub fn buckets(&self) -> &[Complex<f32>] {
-        self.buckets
+        &self.buckets
     }
 
     pub fn amplitudes(&self) -> impl Iterator<Item = f32> + '_ {
@@ -247,21 +247,19 @@ impl<'a, 'w> Spectrum<'a, 'w> {
     }
 
     // TODO: signed shift?
-    pub fn shift(&mut self, shift: usize) {
+    pub fn shift(&self, shift: usize) -> Spectrum<'w> {
         let half_spectrum = self.width / 2;
 
-        // Shift real half right
-        self.buckets.copy_within(..(half_spectrum - shift), shift);
-
-        // Zero to the left of the moved right half
-        self.buckets[..shift].fill(Complex::new(0.0, 0.0));
-
-        // Shift imaginary half left
-        self.buckets
-            .copy_within((half_spectrum + shift).., half_spectrum);
-
-        // Zero to the right of the moved left half
-        self.buckets[(self.width - shift)..].fill(Complex::new(0.0, 0.0));
+        Spectrum {
+            width: self.width,
+            waveform: self.waveform,
+            buckets: iter::repeat(Complex::new(0.0, 0.0))
+                .take(shift)
+                .chain(self.buckets[..(half_spectrum - shift)].iter().copied())
+                .chain(self.buckets[(half_spectrum + shift)..].iter().copied())
+                .chain(iter::repeat(Complex::new(0.0, 0.0)).take(shift))
+                .collect(),
+        }
     }
 }
 
@@ -310,6 +308,42 @@ impl Waveform<'_> {
             .iter()
             .enumerate()
             .map(|(sample, x)| (self.time_from_sample(sample), *x))
+    }
+}
+
+impl Waveform<'_> {
+    // TODO: see if rfft would be worth using unsafe for over cfft
+    pub fn spectrum(&self, window: Window, window_width: usize) -> Spectrum {
+        debug_assert!(
+            self.len() >= window_width,
+            "not enough samples provided. expected at least {window_width}, got {}",
+            self.len()
+        );
+        assert!(
+            self.len().is_power_of_two(),
+            "waveform length must be a power of two"
+        );
+
+        let window = window.into_iter(window_width);
+
+        // Copy samples into the spectrum, filling any extra space with zeros
+        let mut buckets = self
+            .samples()
+            .iter()
+            .copied()
+            .zip(window.chain(iter::repeat(0.0)))
+            .map(|(sample, scale)| Complex::new(sample * scale, 0.0))
+            .take(self.len())
+            .collect::<Box<_>>();
+
+        // Perform the FFT based on the calculated width
+        cfft(&mut buckets);
+
+        Spectrum {
+            buckets,
+            width: self.len(),
+            waveform: self,
+        }
     }
 }
 
@@ -365,59 +399,6 @@ impl Iterator for WindowIter {
             })
         } else {
             None
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct WaveformAnalyzer {
-    // Scratch buffer for dealing with complex numbers
-    // TODO: arena allocator? or maybe just suck up the allocations
-    spectrum_buffer: Vec<Complex<f32>>,
-}
-
-impl WaveformAnalyzer {
-    // TODO: see if rfft would be worth using unsafe for over cfft
-    // TODO: windowing functions
-    pub fn spectrum<'analyzer, 'waveform>(
-        &'analyzer mut self,
-        waveform: &'waveform Waveform,
-        window_width: usize,
-        window: Window,
-    ) -> Spectrum<'analyzer, 'waveform> {
-        debug_assert!(
-            waveform.len() >= window_width,
-            "not enough samples provided. expected at least {window_width}, got {}",
-            waveform.len()
-        );
-        assert!(
-            waveform.len().is_power_of_two(),
-            "waveform length must be a power of two"
-        );
-
-        let window = window.into_iter(window_width);
-
-        // Resize the spectrum buffer to fit the
-        self.spectrum_buffer.clear();
-
-        // Copy samples into the spectrum, filling any extra space with zeros
-        self.spectrum_buffer.extend(
-            waveform
-                .samples()
-                .iter()
-                .copied()
-                .zip(window.chain(iter::repeat(0.0)))
-                .map(|(sample, scale)| Complex::new(sample * scale, 0.0))
-                .take(waveform.len()),
-        );
-
-        // Perform the FFT based on the calculated width
-        cfft(&mut self.spectrum_buffer);
-
-        Spectrum {
-            buckets: &mut self.spectrum_buffer,
-            waveform,
-            width: waveform.len(),
         }
     }
 }

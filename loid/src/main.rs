@@ -2,8 +2,12 @@
 
 mod app;
 
-use common::color_eyre;
 use app::Loid;
+use common::color_eyre;
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "snmalloc"))]
+#[global_allocator]
+static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
@@ -29,5 +33,8 @@ pub fn main() -> Result<(), eframe::wasm_bindgen::JsValue> {
     console_error_panic_hook::set_once();
 
     // TODO: Better error handling
-    eframe::start_web("egui_canvas", Loid::initialize().map_err(|err| err.to_string())?)
+    eframe::start_web(
+        "egui_canvas",
+        Loid::initialize().map_err(|err| err.to_string())?,
+    )
 }

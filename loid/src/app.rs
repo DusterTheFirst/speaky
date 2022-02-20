@@ -13,7 +13,7 @@ use std::{
 use common::{
     color_eyre, install_tracing,
     rodio::{buffer::SamplesBuffer, source::SineWave, OutputStream, Sink, Source},
-    spectrum::{Spectrum, Waveform, WaveformAnalyzer, Window},
+    spectrum::{Spectrum, Waveform, Window},
 };
 use eframe::{
     egui::{
@@ -28,7 +28,6 @@ pub struct Loid {
     audio_sink: Arc<Sink>,
 
     waveform: Waveform<'static>,
-    analyzer: WaveformAnalyzer,
 
     window: Window,
 
@@ -71,7 +70,6 @@ impl Loid {
             audio_sink: Arc::new(sink),
 
             waveform: Waveform::new(samples, sample_rate),
-            analyzer: WaveformAnalyzer::default(),
 
             window: Window::Hann,
 
@@ -346,9 +344,9 @@ impl App for Loid {
         // Get the slice of the waveform to work on
         let waveform = self.waveform.slice(cursor..(cursor + fft_width));
 
-        let mut spectrum = self
-            .analyzer
-            .spectrum(&waveform, self.window_width, self.window);
+        let spectrum = waveform.spectrum(self.window, self.window_width);
+
+        let shifted_spectrum = spectrum.shift(spectrum.bucket_from_freq(self.shift));
 
         TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.label(format!(
@@ -477,24 +475,18 @@ impl App for Loid {
                     Self::display_spectrum(
                         ui,
                         &spectrum,
-                        "Original",
+                        "Frequency Spectrum",
                         self.full_spectrum,
                         self.phase,
                     );
-
-                    spectrum.shift(spectrum.bucket_from_freq(self.shift));
 
                     Self::display_spectrum(
                         ui,
-                        &spectrum,
-                        "Shifted",
+                        &shifted_spectrum,
+                        "Shifted Frequency Spectrum",
                         self.full_spectrum,
                         self.phase,
                     );
-
-                    if self.full_spectrum {
-                        ui.vline(VLine::new(spectrum.freq_from_bucket(spectrum.width() / 2)))
-                    }
                 });
         });
     }
