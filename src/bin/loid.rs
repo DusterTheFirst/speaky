@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::{
+    iter,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -12,17 +13,17 @@ use std::{
 use color_eyre::eyre::Context;
 use eframe::{
     egui::{
-        plot::{Bar, BarChart, Legend, Plot, PlotUi, Points, Text, VLine, Value, Values},
-        Align2, Button, CentralPanel, Color32, CtxRef, Label, SidePanel, Slider, TextStyle,
-        TopBottomPanel,
+        plot::{Bar, BarChart, Legend, Line, Plot, PlotUi, Points, Text, VLine, Value, Values},
+        Align2, Button, CentralPanel, Color32, CtxRef, Label, ScrollArea, SidePanel, Slider,
+        TextStyle, TopBottomPanel,
     },
     epi::{App, Frame},
     NativeOptions,
 };
-use rodio::{buffer::SamplesBuffer, OutputStream, Sink, Source};
+use rodio::{buffer::SamplesBuffer, source::SineWave, OutputStream, Sink, Source};
 use speaky::{
     install_tracing,
-    spectrum::{Spectrum, Waveform, WaveformAnalyzer},
+    spectrum::{Spectrum, Waveform, WaveformAnalyzer, Window},
     tts::{load_language, setup_tts, synthesize},
 };
 
@@ -38,8 +39,8 @@ fn main() -> color_eyre::Result<()> {
 
     let mut engine = setup_tts(resources).wrap_err("unable to setup tts engine")?;
 
-    let speech = synthesize(&mut engine, "Some Body Once").wrap_err("unable to synthesize text")?;
-    // let speech = SineWave::new(440.0).take_duration(Duration::from_secs(2));
+    // let speech = synthesize(&mut engine, "Some Body Once").wrap_err("unable to synthesize text")?;
+    let speech = SineWave::new(120.0).take_duration(Duration::from_secs(1));
 
     let sample_rate = speech.sample_rate();
     let samples: Vec<f32> = speech.convert_samples().collect();
@@ -53,7 +54,7 @@ fn main() -> color_eyre::Result<()> {
             waveform: Waveform::new(samples, sample_rate),
             analyzer: WaveformAnalyzer::default(),
 
-            last_update: None,
+            window: Window::Hann,
 
             playback_head: Arc::new(AtomicUsize::new(0)),
 
@@ -62,7 +63,9 @@ fn main() -> color_eyre::Result<()> {
             phase: false,
 
             cursor: 0,
-            width: 2048,
+            fft_width: 11,
+            window_width: 2048,
+            hop_frac: 4,
 
             shift: 0.0,
         }),
@@ -73,10 +76,10 @@ fn main() -> color_eyre::Result<()> {
 struct Loid {
     audio_sink: Arc<Sink>,
 
-    waveform: Waveform,
+    waveform: Waveform<'static>,
     analyzer: WaveformAnalyzer,
 
-    last_update: Option<Duration>,
+    window: Window,
 
     playback_head: Arc<AtomicUsize>,
 
@@ -85,7 +88,9 @@ struct Loid {
     phase: bool,
 
     cursor: usize,
-    width: usize,
+    fft_width: u8,
+    window_width: usize,
+    hop_frac: usize,
 
     shift: f64,
 }
@@ -171,43 +176,34 @@ impl Loid {
         full_spectrum: bool,
         phase: bool,
     ) {
-        let width = if full_spectrum {
-            spectrum.width()
-        } else {
-            spectrum.width() / 2
-        };
+        // TODO: DECIBELS
 
-        let mut max = None;
+        #[inline(always)]
+        fn map(
+            iterator: impl Iterator<Item = f32>,
+            freq_from_bucket: impl Fn(usize) -> f64,
+        ) -> Vec<Bar> {
+            iterator
+                .enumerate()
+                .map(|(bucket, mag)| Bar::new(freq_from_bucket(bucket), mag as f64))
+                .collect()
+        }
 
-        let buckets = if phase {
-            spectrum
-                .phases()
-                .enumerate()
-                .map(|(bucket, freq)| Bar::new(spectrum.freq_from_bucket(bucket), freq as f64))
-                .take(width)
-                .collect()
-        } else {
-            spectrum
-                .amplitudes()
-                .enumerate()
-                .inspect(|new| {
-                    if new.1 > max.get_or_insert(*new).1 {
-                        max = Some(*new);
-                    }
-                })
-                .map(|(bucket, amp)| Bar::new(spectrum.freq_from_bucket(bucket), amp as f64))
-                .take(width)
-                .collect()
+        let buckets = match (phase, full_spectrum) {
+            (true, true) => map(spectrum.phases(), |b| spectrum.freq_from_bucket(b)),
+            (true, false) => map(spectrum.phases_real(), |b| spectrum.freq_from_bucket(b)),
+            (false, true) => map(spectrum.amplitudes(), |b| spectrum.freq_from_bucket(b)),
+            (false, false) => map(spectrum.amplitudes_real(), |b| spectrum.freq_from_bucket(b)),
         };
 
         ui.bar_chart(
             BarChart::new(buckets)
-                .width(spectrum.freq_from_bucket(1))
+                .width(spectrum.freq_resolution())
                 .name(&title),
         );
 
         if !phase {
-            if let Some((bucket, max)) = max {
+            if let Some((bucket, max)) = spectrum.main_frequency() {
                 let freq = spectrum.freq_from_bucket(bucket);
 
                 ui.text(
@@ -222,133 +218,151 @@ impl Loid {
 
 impl App for Loid {
     fn update(&mut self, ctx: &CtxRef, frame: &Frame) {
-        let update_start = Instant::now();
-
         SidePanel::left("left_panel").show(ctx, |ui| {
-            ui.heading("Rendering Statistics");
-            ui.horizontal_wrapped(|ui| {
-                ui.add(
-                    Label::new(format!(
-                        "Last frame: {:.4} ms",
-                        frame.info().cpu_usage.unwrap_or(0.0) * 1000.0
-                    ))
-                    .wrap(false),
-                );
-                ui.add(
-                    Label::new(format!(
-                        "Last update: {:.4} ms",
-                        self.last_update.unwrap_or_default().as_secs_f64() * 1000.0
-                    ))
-                    .wrap(false),
-                );
-                ui.add(
-                    Label::new(format!(
-                        "Max refresh: {:.1} fps",
-                        1.0 / frame.info().cpu_usage.unwrap_or(0.0)
-                    ))
-                    .wrap(false),
-                );
-            });
-
-            ui.separator();
-            ui.heading("Playback");
-            if ui
-                .add_enabled(self.audio_sink.empty(), Button::new("Play Original"))
-                .clicked()
-            {
-                self.play(self.waveform.samples(), frame.clone());
-            }
-
-            if ui
-                .add_enabled(
-                    false,
-                    // self.audio_sink.empty() && !self.reconstructed_samples.is_empty(),
-                    Button::new("Play Reconstructed"),
-                )
-                .clicked()
-            {
-                // self.play(self.reconstructed_samples.as_ref(), frame.clone());
-            }
-
-            if ui
-                .add_enabled(false, Button::new("Reconstruct Samples"))
-                .clicked()
-            {
-                // self.reconstruct_samples();
-            }
-
-            ui.checkbox(&mut self.follow_playback, "FFT follows playback");
-
-            ui.separator();
-            ui.add_enabled_ui(!self.follow_playback || self.audio_sink.empty(), |ui| {
-                ui.heading("FFT");
-                ui.label("Window Width");
-                ui.add(
-                    Slider::new(&mut self.width, 2..=1 << 14)
-                        .logarithmic(true)
-                        .suffix(" samples"),
-                );
-
-                let max_cursor = self.waveform.len() - self.width - 1;
-                self.cursor = self.cursor.min(max_cursor);
-
-                ui.label("Window Start");
-                ui.add(Slider::new(&mut self.cursor, 0..=max_cursor).prefix("sample "));
-
+            ScrollArea::vertical().show(ui, |ui| {
+                ui.heading("Rendering Statistics");
                 ui.horizontal_wrapped(|ui| {
-                    if ui
-                        .add_enabled(self.cursor >= self.width, Button::new("Previous"))
-                        .clicked()
-                    {
-                        self.cursor -= self.width;
-                    }
-
-                    if ui
-                        .add_enabled(
-                            self.cursor + self.width * 2 <= self.waveform.len(),
-                            Button::new("Next"),
-                        )
-                        .clicked()
-                    {
-                        self.cursor += self.width;
-                    }
+                    ui.add(
+                        Label::new(format!(
+                            "Last frame: {:.4} ms",
+                            frame.info().cpu_usage.unwrap_or(0.0) * 1000.0
+                        ))
+                        .wrap(false),
+                    );
+                    ui.add(
+                        Label::new(format!(
+                            "Max refresh: {:.1} fps",
+                            1.0 / frame.info().cpu_usage.unwrap_or(0.0)
+                        ))
+                        .wrap(false),
+                    );
                 });
 
                 ui.separator();
-                ui.heading("DSP");
-                ui.label("Frequency shift");
-                ui.add(Slider::new(&mut self.shift, 0.0..=1000.0).suffix(" Hz"));
-            });
+                ui.heading("Playback");
+                if ui
+                    .add_enabled(self.audio_sink.empty(), Button::new("Play Original"))
+                    .clicked()
+                {
+                    self.play(self.waveform.samples(), frame.clone());
+                }
 
-            ui.separator();
-            ui.heading("Visualization");
-            ui.horizontal_wrapped(|ui| {
-                ui.checkbox(&mut self.full_spectrum, "Show full spectrum");
-                ui.checkbox(&mut self.phase, "Show phase");
+                if ui
+                    .add_enabled(
+                        false,
+                        // self.audio_sink.empty() && !self.reconstructed_samples.is_empty(),
+                        Button::new("Play Reconstructed"),
+                    )
+                    .clicked()
+                {
+                    // self.play(self.reconstructed_samples.as_ref(), frame.clone());
+                }
+
+                if ui
+                    .add_enabled(false, Button::new("Reconstruct Samples"))
+                    .clicked()
+                {
+                    // self.reconstruct_samples();
+                }
+
+                ui.checkbox(&mut self.follow_playback, "FFT follows playback");
+
+                ui.separator();
+                ui.add_enabled_ui(!self.follow_playback || self.audio_sink.empty(), |ui| {
+                    ui.heading("FFT");
+                    ui.label("FFT Width");
+                    ui.add(
+                        Slider::new(&mut self.fft_width, 1..=14)
+                            .prefix("2^")
+                            .suffix(" samples"),
+                    );
+
+                    // Ensure the window width is always <= fft_width
+                    self.window_width = self.window_width.min(1 << self.fft_width);
+
+                    ui.label("Window Width");
+                    ui.add(
+                        Slider::new(&mut self.window_width, 2..=(1 << self.fft_width))
+                            .suffix(" samples"),
+                    );
+
+                    ui.label("Window Function");
+                    ui.horizontal_wrapped(|ui| {
+                        for window in Window::ALL {
+                            ui.selectable_value(&mut self.window, window, window.to_string());
+                        }
+                    });
+
+                    ui.label("Hop Fraction");
+                    ui.add(Slider::new(&mut self.hop_frac, 1..=16));
+
+                    let max_cursor = self.waveform.len() - self.window_width - 1;
+                    self.cursor = self.cursor.min(max_cursor);
+
+                    ui.label("Window Start");
+                    ui.add(Slider::new(&mut self.cursor, 0..=max_cursor).prefix("sample "));
+
+                    ui.horizontal_wrapped(|ui| {
+                        let step = self.window_width / self.hop_frac;
+
+                        if ui
+                            .add_enabled(self.cursor >= step, Button::new("Previous"))
+                            .clicked()
+                        {
+                            self.cursor -= step;
+                        }
+
+                        if ui
+                            .add_enabled(
+                                self.cursor + self.window_width + step <= self.waveform.len(),
+                                Button::new("Next"),
+                            )
+                            .clicked()
+                        {
+                            self.cursor += step;
+                        }
+                    });
+
+                    ui.separator();
+                    ui.heading("DSP");
+                    ui.label("Frequency shift");
+                    ui.add(Slider::new(&mut self.shift, 0.0..=1000.0).suffix(" Hz"));
+                });
+
+                ui.separator();
+                ui.heading("Visualization");
+                ui.horizontal_wrapped(|ui| {
+                    ui.checkbox(&mut self.full_spectrum, "Show full spectrum");
+                    ui.checkbox(&mut self.phase, "Show phase");
+                });
             });
         });
 
         let cursor = if self.follow_playback && !self.audio_sink.empty() {
             self.playback_head
                 .load(Ordering::SeqCst)
-                .min(self.waveform.len() - self.width - 1)
+                .min(self.waveform.len() - self.window_width - 1)
         } else {
             self.cursor
         };
 
-        let range = cursor..(cursor + self.width);
-        let mut spectrum = self.analyzer.spectrum(&self.waveform, range.clone());
+        // Calculate FFT width in bytes
+        let fft_width = 1 << self.fft_width;
+
+        // Get the slice of the waveform to work on
+        let waveform = self.waveform.slice(cursor..(cursor + fft_width));
+
+        let mut spectrum = self
+            .analyzer
+            .spectrum(&waveform, self.window_width, self.window);
 
         TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.label(format!(
                 "Frequency Resolution: {} Hz",
-                spectrum.freq_from_bucket(1)
+                spectrum.freq_resolution()
             ));
 
-            ui.label(format!(
-                "FFT algorithm: cfft_{}",
-                self.width.next_power_of_two()
-            ));
+            ui.label(format!("FFT algorithm: cfft_{}", fft_width));
         });
 
         CentralPanel::default().show(ctx, |ui| {
@@ -382,31 +396,32 @@ impl App for Loid {
                     ui.vline(
                         VLine::new(self.waveform.time_from_sample(cursor))
                             .color(Color32::DARK_GREEN)
-                            .width(2.5),
+                            .width(2.5)
+                            .name("Start of Window"),
                     );
                     ui.vline(
-                        VLine::new(self.waveform.time_from_sample(cursor + self.width))
+                        VLine::new(self.waveform.time_from_sample(cursor + self.window_width))
                             .color(Color32::DARK_RED)
-                            .width(1.5),
+                            .width(1.5)
+                            .name("End of Window"),
                     );
-                    ui.vline(VLine::new(
-                        self.waveform
-                            .time_from_sample(self.playback_head.load(Ordering::SeqCst)),
-                    ));
+                    ui.vline(
+                        VLine::new(
+                            self.waveform
+                                .time_from_sample(cursor + self.window_width / self.hop_frac),
+                        )
+                        .color(Color32::GOLD)
+                        .name("Start of Next Window"),
+                    );
+                    ui.vline(
+                        VLine::new(
+                            self.waveform
+                                .time_from_sample(self.playback_head.load(Ordering::SeqCst)),
+                        )
+                        .color(Color32::LIGHT_BLUE)
+                        .name("Playback Head"),
+                    );
                 });
-
-            // spectrum(
-            //     cursor,
-            //     self.width,
-            //     self.samples.as_ref(),
-            //     &mut self.spectrum,
-            // );
-            // TODO: solve problem where you can use the shifted spectrum before calculation
-            // shift_spectrum(
-            //     self.bucket_from_freq(self.shift),
-            //     &self.spectrum,
-            //     &mut self.shifted_spectrum,
-            // )
 
             Plot::new("window_samples")
                 .height(ui.available_height() / 2.0)
@@ -416,9 +431,34 @@ impl App for Loid {
                 .include_y(-1.0)
                 .show(ui, |ui| {
                     ui.points(
-                        Points::new(Values::from_ys_f32(&self.waveform.samples()[range.clone()]))
+                        Points::new(Values::from_ys_f32(waveform.samples()))
                             .name("Samples")
                             .stems(0.0),
+                    );
+
+                    ui.line(
+                        Line::new(Values::from_values_iter(
+                            self.window
+                                .into_iter(self.window_width)
+                                .chain(iter::repeat(0.0))
+                                .enumerate()
+                                .map(|(i, w)| Value::new(i as f32, w))
+                                .take(fft_width),
+                        ))
+                        .name("Window"),
+                    );
+
+                    ui.points(
+                        Points::new(Values::from_values_iter(
+                            waveform
+                                .samples()
+                                .iter()
+                                .zip(self.window.into_iter(self.window_width))
+                                .enumerate()
+                                .map(|(i, (sample, w))| Value::new(i as f32, w * sample)),
+                        ))
+                        .name("Windowed Samples")
+                        .stems(0.0),
                     );
 
                     // reconstruct_samples(
@@ -463,8 +503,6 @@ impl App for Loid {
                     }
                 });
         });
-
-        self.last_update.replace(update_start.elapsed());
     }
 
     fn name(&self) -> &str {

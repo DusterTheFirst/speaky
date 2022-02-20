@@ -3,6 +3,7 @@
         "cfft",
         "eframe",
         "egui",
+        "Hann",
         "hline",
         "microfft",
         "rfft",

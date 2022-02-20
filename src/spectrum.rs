@@ -1,4 +1,11 @@
-use std::{iter, ops::Range};
+use std::{
+    borrow::Cow,
+    cmp::Ordering,
+    f32::consts,
+    fmt::{self, Display},
+    iter,
+    ops::Range,
+};
 
 use num_complex::Complex;
 
@@ -162,10 +169,21 @@ pub fn scale_spectrum(
     }
 }
 
+/// Helper function to wrap a phase between -[π] and [π]
+///
+/// [π]: std::f32::consts::PI
+fn wrap_phase(phase: f32) -> f32 {
+    if phase >= 0.0 {
+        ((phase + consts::PI) % consts::TAU) - consts::PI
+    } else {
+        ((phase - consts::PI) % -consts::TAU) + consts::PI
+    }
+}
+
 pub struct Spectrum<'analyzer, 'waveform> {
     width: usize,
     buckets: &'analyzer mut [Complex<f32>],
-    waveform: &'waveform Waveform,
+    waveform: &'waveform Waveform<'waveform>,
 }
 
 impl<'a, 'w> Spectrum<'a, 'w> {
@@ -178,24 +196,56 @@ impl<'a, 'w> Spectrum<'a, 'w> {
     }
 
     pub fn amplitudes(&self) -> impl Iterator<Item = f32> + '_ {
-        self.buckets
-            .iter()
-            .map(|complex| complex.norm() / self.width as f32)
+        self.buckets.iter().map(|complex| complex.norm())
     }
 
     pub fn phases(&self) -> impl Iterator<Item = f32> + '_ {
-        self.buckets.iter().map(|complex| complex.arg())
+        self.buckets
+            .iter()
+            .map(|complex| complex.arg() / self.width as f32)
+    }
+
+    pub fn amplitudes_real(&self) -> impl Iterator<Item = f32> + '_ {
+        self.amplitudes().take(self.width / 2 + 1)
+    }
+
+    pub fn phases_real(&self) -> impl Iterator<Item = f32> + '_ {
+        self.phases().take(self.width / 2 + 1)
+    }
+
+    // TODO: rename?
+    pub fn main_frequency(&self) -> Option<(usize, f32)> {
+        self.amplitudes_real()
+            .enumerate()
+            .max_by(|&(_, amp_1), &(_, amp_2)| {
+                amp_1.partial_cmp(&amp_2).unwrap_or_else(|| {
+                    // Choose the non-nan value
+                    match (amp_1.is_nan(), amp_2.is_nan()) {
+                        (true, true) => panic!("encountered two NaN values"),
+                        (false, true) => Ordering::Greater,
+                        (true, false) => Ordering::Less,
+                        (false, false) => unreachable!(),
+                    }
+                })
+            })
+    }
+
+    pub fn freq_resolution(&self) -> f64 {
+        (1.0 / self.width as f64) * self.waveform.sample_rate as f64
     }
 
     pub fn freq_from_bucket(&self, bucket: usize) -> f64 {
-        bucket as f64 / self.width as f64 * self.waveform.sample_rate as f64
+        if bucket > self.width / 2 {
+            -((self.width - bucket) as f64 * self.freq_resolution())
+        } else {
+            bucket as f64 * self.freq_resolution()
+        }
     }
 
     pub fn bucket_from_freq(&self, freq: f64) -> usize {
         ((freq * self.width as f64) / self.waveform.sample_rate as f64).round() as usize
     }
 
-    // FIXME: probably wrong
     // TODO: signed shift?
     pub fn shift(&mut self, shift: usize) {
         let half_spectrum = self.width / 2;
@@ -215,16 +265,23 @@ impl<'a, 'w> Spectrum<'a, 'w> {
     }
 }
 
-pub struct Waveform {
-    samples: Vec<f32>,
+pub struct Waveform<'s> {
+    samples: Cow<'s, [f32]>,
     sample_rate: u32,
 }
 
-impl Waveform {
+impl Waveform<'_> {
     pub fn new(samples: Vec<f32>, sample_rate: u32) -> Self {
         Self {
-            samples,
+            samples: Cow::Owned(samples),
             sample_rate,
+        }
+    }
+
+    pub fn slice(&self, range: Range<usize>) -> Waveform {
+        Waveform {
+            sample_rate: self.sample_rate,
+            samples: Cow::Borrowed(&self.samples[range]),
         }
     }
 
@@ -256,6 +313,62 @@ impl Waveform {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Window {
+    #[doc(alias = "Triangular")]
+    Bartlett,
+    Hamming,
+    /// Good default choice
+    Hann,
+    Rectangular,
+}
+
+impl Display for Window {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl Window {
+    pub const ALL: [Window; 4] = [Self::Bartlett, Self::Hamming, Self::Hann, Self::Rectangular];
+
+    pub fn into_iter(self, width: usize) -> WindowIter {
+        WindowIter {
+            range: 0..width,
+            width,
+            window: self,
+        }
+    }
+}
+
+pub struct WindowIter {
+    range: Range<usize>,
+    width: usize,
+    window: Window,
+}
+
+impl Iterator for WindowIter {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(n) = self.range.next() {
+            let n = n as f32;
+            let width = self.width as f32;
+
+            Some(match self.window {
+                Window::Rectangular => 1.0,
+                Window::Bartlett => 1.0 - f32::abs((n - width / 2.0) / (width / 2.0)),
+                Window::Hann => 0.5 * (1.0 - f32::cos((consts::TAU * n) / width)),
+                Window::Hamming => {
+                    (25.0 / 46.0) - ((21.0 / 46.0) * f32::cos((consts::TAU * n) / width))
+                }
+            })
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct WaveformAnalyzer {
     // Scratch buffer for dealing with complex numbers
@@ -269,27 +382,33 @@ impl WaveformAnalyzer {
     pub fn spectrum<'analyzer, 'waveform>(
         &'analyzer mut self,
         waveform: &'waveform Waveform,
-        range: Range<usize>,
+        window_width: usize,
+        window: Window,
     ) -> Spectrum<'analyzer, 'waveform> {
         debug_assert!(
-            range.start < range.end,
-            "range end must be greater than range start"
+            waveform.len() >= window_width,
+            "not enough samples provided. expected at least {window_width}, got {}",
+            waveform.len()
+        );
+        assert!(
+            waveform.len().is_power_of_two(),
+            "waveform length must be a power of two"
         );
 
-        let width = range.len();
-        let width = width.next_power_of_two();
+        let window = window.into_iter(window_width);
 
         // Resize the spectrum buffer to fit the
         self.spectrum_buffer.clear();
 
         // Copy samples into the spectrum, filling any extra space with zeros
         self.spectrum_buffer.extend(
-            waveform.samples[range]
+            waveform
+                .samples()
                 .iter()
                 .copied()
-                .chain(iter::repeat(0.0))
-                .map(|sample| Complex::new(sample, 0.0))
-                .take(width),
+                .zip(window.chain(iter::repeat(0.0)))
+                .map(|(sample, scale)| Complex::new(sample * scale, 0.0))
+                .take(waveform.len()),
         );
 
         // Perform the FFT based on the calculated width
@@ -298,7 +417,7 @@ impl WaveformAnalyzer {
         Spectrum {
             buckets: &mut self.spectrum_buffer,
             waveform,
-            width,
+            width: waveform.len(),
         }
     }
 }
