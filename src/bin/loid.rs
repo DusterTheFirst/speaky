@@ -14,13 +14,14 @@ use eframe::{
     egui::{
         plot::{Bar, BarChart, Legend, Plot, PlotUi, Points, Text, VLine, Value, Values},
         Align2, Button, CentralPanel, Color32, CtxRef, Label, SidePanel, Slider, TextStyle,
+        TopBottomPanel,
     },
     epi::{App, Frame},
     NativeOptions,
 };
 use rodio::{buffer::SamplesBuffer, OutputStream, Sink, Source};
 use speaky::{
-    audio, install_tracing,
+    install_tracing,
     spectrum::{Spectrum, Waveform, WaveformAnalyzer},
     tts::{load_language, setup_tts, synthesize},
 };
@@ -258,15 +259,23 @@ impl App for Loid {
                 self.play(self.waveform.samples(), frame.clone());
             }
 
-            // if ui
-            //     .add_enabled(
-            //         self.audio_sink.empty() && !self.reconstructed_samples.is_empty(),
-            //         Button::new("Play Reconstructed"),
-            //     )
-            //     .clicked()
-            // {
-            //     self.play(self.reconstructed_samples.as_ref(), frame.clone());
-            // }
+            if ui
+                .add_enabled(
+                    false,
+                    // self.audio_sink.empty() && !self.reconstructed_samples.is_empty(),
+                    Button::new("Play Reconstructed"),
+                )
+                .clicked()
+            {
+                // self.play(self.reconstructed_samples.as_ref(), frame.clone());
+            }
+
+            if ui
+                .add_enabled(false, Button::new("Reconstruct Samples"))
+                .clicked()
+            {
+                // self.reconstruct_samples();
+            }
 
             ui.checkbox(&mut self.follow_playback, "FFT follows playback");
 
@@ -305,20 +314,11 @@ impl App for Loid {
                     }
                 });
 
-                ui.label(format!(
-                    "FFT algorithm: cfft_{}",
-                    self.width.next_power_of_two()
-                ));
-
                 ui.separator();
                 ui.heading("DSP");
                 ui.label("Frequency shift");
                 ui.add(Slider::new(&mut self.shift, 0.0..=1000.0).suffix(" Hz"));
             });
-
-            // if ui.button("Reconstruct Samples").clicked() {
-            //     // self.reconstruct_samples();
-            // }
 
             ui.separator();
             ui.heading("Visualization");
@@ -336,10 +336,22 @@ impl App for Loid {
             self.cursor
         };
 
-        CentralPanel::default().show(ctx, |ui| {
-            let range = cursor..(cursor + self.width);
-            let spectrum = self.analyzer.spectrum(&self.waveform, range.clone());
+        let range = cursor..(cursor + self.width);
+        let mut spectrum = self.analyzer.spectrum(&self.waveform, range.clone());
 
+        TopBottomPanel::top("top_panel").show(ctx, |ui| {
+            ui.label(format!(
+                "Frequency Resolution: {} Hz",
+                spectrum.freq_from_bucket(1)
+            ));
+
+            ui.label(format!(
+                "FFT algorithm: cfft_{}",
+                self.width.next_power_of_two()
+            ));
+        });
+
+        CentralPanel::default().show(ctx, |ui| {
             Plot::new("samples")
                 .height(ui.available_height() / 3.0)
                 .center_y_axis(true)
@@ -404,7 +416,7 @@ impl App for Loid {
                 .include_y(-1.0)
                 .show(ui, |ui| {
                     ui.points(
-                        Points::new(Values::from_ys_f32(&self.waveform.samples()[range]))
+                        Points::new(Values::from_ys_f32(&self.waveform.samples()[range.clone()]))
                             .name("Samples")
                             .stems(0.0),
                     );
@@ -436,7 +448,15 @@ impl App for Loid {
                         self.phase,
                     );
 
-                    // self.display_spectrum(ui, &self.shifted_spectrum, "Shifted");
+                    spectrum.shift(spectrum.bucket_from_freq(self.shift));
+
+                    Self::display_spectrum(
+                        ui,
+                        &spectrum,
+                        "Shifted",
+                        self.full_spectrum,
+                        self.phase,
+                    );
 
                     if self.full_spectrum {
                         ui.vline(VLine::new(spectrum.freq_from_bucket(spectrum.width() / 2)))

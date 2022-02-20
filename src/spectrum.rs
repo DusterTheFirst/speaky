@@ -164,7 +164,7 @@ pub fn scale_spectrum(
 
 pub struct Spectrum<'analyzer, 'waveform> {
     width: usize,
-    buckets: &'analyzer [Complex<f32>],
+    buckets: &'analyzer mut [Complex<f32>],
     waveform: &'waveform Waveform,
 }
 
@@ -197,17 +197,22 @@ impl<'a, 'w> Spectrum<'a, 'w> {
 
     // FIXME: probably wrong
     // TODO: signed shift?
-    // pub fn shift(&mut self, range: Range<usize>, shift: usize) {
-    //     let half_spectrum = self.buckets.len() / 2;
-    //     let width_to_copy = half_spectrum - shift;
+    pub fn shift(&mut self, shift: usize) {
+        let half_spectrum = self.width / 2;
 
-    //     // Shift real half right
-    //     self.buckets.copy_within(0..width_to_copy, shift);
+        // Shift real half right
+        self.buckets.copy_within(..(half_spectrum - shift), shift);
 
-    //     // Shift imaginary half left
-    //     self.buckets
-    //         .copy_within((half_spectrum + width_to_copy).., half_spectrum);
-    // }
+        // Zero to the left of the moved right half
+        self.buckets[..shift].fill(Complex::new(0.0, 0.0));
+
+        // Shift imaginary half left
+        self.buckets
+            .copy_within((half_spectrum + shift).., half_spectrum);
+
+        // Zero to the right of the moved left half
+        self.buckets[(self.width - shift)..].fill(Complex::new(0.0, 0.0));
+    }
 }
 
 pub struct Waveform {
@@ -254,6 +259,7 @@ impl Waveform {
 #[derive(Debug, Default)]
 pub struct WaveformAnalyzer {
     // Scratch buffer for dealing with complex numbers
+    // TODO: arena allocator? or maybe just suck up the allocations
     spectrum_buffer: Vec<Complex<f32>>,
 }
 
@@ -290,7 +296,7 @@ impl WaveformAnalyzer {
         cfft(&mut self.spectrum_buffer);
 
         Spectrum {
-            buckets: &self.spectrum_buffer,
+            buckets: &mut self.spectrum_buffer,
             waveform,
             width,
         }
