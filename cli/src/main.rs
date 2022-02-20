@@ -1,9 +1,11 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used)]
 
-use color_eyre::eyre::Context;
-use rodio::{OutputStream, Sink};
-use speaky::tts::{load_language, setup_tts, synthesize};
+use common::{
+    color_eyre::{eyre::Context, self},
+    rodio::{OutputStream, Sink},
+    tts::{load_language, setup_tts, synthesize},
+};
 use std::io::{self, Write};
 
 fn main() -> color_eyre::Result<()> {

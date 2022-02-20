@@ -7,10 +7,14 @@ use std::{
         Arc,
     },
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
-use color_eyre::eyre::Context;
+use common::{
+    color_eyre, install_tracing,
+    rodio::{buffer::SamplesBuffer, source::SineWave, OutputStream, Sink, Source},
+    spectrum::{Spectrum, Waveform, WaveformAnalyzer, Window},
+};
 use eframe::{
     egui::{
         plot::{Bar, BarChart, Legend, Line, Plot, PlotUi, Points, Text, VLine, Value, Values},
@@ -19,12 +23,6 @@ use eframe::{
     },
     epi::{App, Frame},
     NativeOptions,
-};
-use rodio::{buffer::SamplesBuffer, source::SineWave, OutputStream, Sink, Source};
-use speaky::{
-    install_tracing,
-    spectrum::{Spectrum, Waveform, WaveformAnalyzer, Window},
-    tts::{load_language, setup_tts, synthesize},
 };
 
 fn main() -> color_eyre::Result<()> {
@@ -35,9 +33,9 @@ fn main() -> color_eyre::Result<()> {
 
     let sink = Sink::try_new(&stream_handle).unwrap();
 
-    let resources = load_language("en-US").unwrap();
+    // let resources = load_language("en-US").unwrap();
 
-    let mut engine = setup_tts(resources).wrap_err("unable to setup tts engine")?;
+    // let mut engine = setup_tts(resources).wrap_err("unable to setup tts engine")?;
 
     // let speech = synthesize(&mut engine, "Some Body Once").wrap_err("unable to synthesize text")?;
     let speech = SineWave::new(120.0).take_duration(Duration::from_secs(1));

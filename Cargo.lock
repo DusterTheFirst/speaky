@@ -218,6 +218,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cli"
+version = "0.1.0"
+dependencies = [
+ "common",
+]
+
+[[package]]
 name = "clipboard-win"
 version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -293,6 +300,22 @@ checksum = "50b727aacc797f9fc28e355d21f34709ac4fc9adecfe470ad07b8f4464f53062"
 dependencies = [
  "bytes",
  "memchr",
+]
+
+[[package]]
+name = "common"
+version = "0.1.0"
+dependencies = [
+ "color-eyre",
+ "cpal",
+ "microfft",
+ "num-complex",
+ "paste",
+ "rodio",
+ "tracing",
+ "tracing-error",
+ "tracing-subscriber",
+ "ttspico",
 ]
 
 [[package]]
@@ -859,6 +882,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51b9bbe6c47d51fc3e1a9b945965946b4c44142ab8792c50835a980d362c2710"
 dependencies = [
  "cfg-if 1.0.0",
+]
+
+[[package]]
+name = "loid"
+version = "0.0.0"
+dependencies = [
+ "common",
+ "eframe",
 ]
 
 [[package]]
@@ -1485,23 +1516,6 @@ checksum = "610b551bd25378bfd2b8e7a0fcbd83d427e8f2f6a40c47ae0f70688e9949dd55"
 dependencies = [
  "smithay-client-toolkit",
  "wayland-client",
-]
-
-[[package]]
-name = "speaky"
-version = "0.1.0"
-dependencies = [
- "color-eyre",
- "cpal",
- "eframe",
- "microfft",
- "num-complex",
- "paste",
- "rodio",
- "tracing",
- "tracing-error",
- "tracing-subscriber",
- "ttspico",
 ]
 
 [[package]]

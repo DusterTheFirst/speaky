@@ -2,8 +2,13 @@
 
 use color_eyre::eyre::Context;
 
+pub use color_eyre;
+pub use rodio;
+
 pub mod audio;
 pub mod spectrum;
+
+#[cfg(not(target_arch = "wasm32"))]
 pub mod tts;
 
 pub fn install_tracing() -> color_eyre::Result<()> {
