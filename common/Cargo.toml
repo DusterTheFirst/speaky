@@ -21,5 +21,6 @@ rodio = { version = "0.15.0", default-features = false }
 rodio = { version = "0.15.0", default-features = false, features = [
     "wasm-bindgen",
 ] }
+tracing-wasm = "0.2.1"
 
 [features]

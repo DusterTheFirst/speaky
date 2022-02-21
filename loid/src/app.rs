@@ -10,7 +10,7 @@ use std::{
 };
 
 use common::{
-    color_eyre, install_tracing,
+    color_eyre,
     rodio::{buffer::SamplesBuffer, source::SineWave, OutputStream, Sink, Source},
     spectrum::{Spectrum, Waveform, Window},
 };
@@ -22,8 +22,11 @@ use eframe::{
     },
     epi::{App, Frame},
 };
+use instant::Instant;
 
-pub struct Loid {
+pub struct Application {
+    math_elapsed: Duration,
+
     audio_sink: Arc<Sink>,
 
     waveform: Waveform<'static>,
@@ -36,6 +39,8 @@ pub struct Loid {
     full_spectrum: bool,
     phase: bool,
     decibels: bool,
+    line: bool,
+    stems: bool,
 
     cursor: usize,
     fft_width: u8,
@@ -45,11 +50,8 @@ pub struct Loid {
     shift: f64,
 }
 
-impl Loid {
-    pub fn initialize() -> color_eyre::Result<Box<Self>> {
-        color_eyre::install()?;
-        install_tracing()?;
-
+impl Application {
+    pub fn initialize() -> color_eyre::Result<Self> {
         let (_stream, stream_handle) = OutputStream::try_default().unwrap();
 
         let sink = Sink::try_new(&stream_handle).unwrap();
@@ -66,7 +68,9 @@ impl Loid {
 
         // let (samples, SampleRate(sample_rate)) = audio::input::h()?;
 
-        Ok(Box::new(Loid {
+        Ok(Application {
+            math_elapsed: Duration::ZERO,
+
             audio_sink: Arc::new(sink),
 
             waveform: Waveform::new(samples, sample_rate),
@@ -79,6 +83,8 @@ impl Loid {
             full_spectrum: false,
             phase: false,
             decibels: false,
+            line: false,
+            stems: true,
 
             cursor: 0,
             fft_width: 11,
@@ -86,7 +92,7 @@ impl Loid {
             hop_frac: 4,
 
             shift: 0.0,
-        }))
+        })
     }
 
     // fn reconstruct_samples(&mut self) {
@@ -221,12 +227,19 @@ impl Loid {
     }
 }
 
-impl App for Loid {
+impl App for Application {
     fn update(&mut self, ctx: &CtxRef, frame: &Frame) {
         SidePanel::left("left_panel").show(ctx, |ui| {
             ScrollArea::vertical().show(ui, |ui| {
                 ui.heading("Rendering Statistics");
                 ui.horizontal_wrapped(|ui| {
+                    ui.add(
+                        Label::new(format!(
+                            "Last math: {:.4} ms",
+                            self.math_elapsed.as_millis()
+                        ))
+                        .wrap(false),
+                    );
                     ui.add(
                         Label::new(format!(
                             "Last frame: {:.4} ms",
@@ -348,6 +361,16 @@ impl App for Loid {
                     ui.checkbox(&mut self.full_spectrum, "Show full spectrum");
                     ui.checkbox(&mut self.phase, "Show phase");
                     ui.checkbox(&mut self.decibels, "Decibels");
+                    ui.checkbox(&mut self.line, "Line Plot");
+                    ui.checkbox(&mut self.stems, "Stems");
+                });
+
+                ui.separator();
+                ui.heading("Debug");
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Panic").clicked() {
+                        panic!("User initiated panic");
+                    }
                 });
             });
         });
@@ -363,6 +386,8 @@ impl App for Loid {
         // Calculate FFT width in bytes
         let fft_width = 1 << self.fft_width;
 
+        let math_start = Instant::now();
+
         // Get the slice of the waveform to work on
         let waveform = self.waveform.slice(cursor..(cursor + self.window_width));
 
@@ -375,6 +400,8 @@ impl App for Loid {
         let reconstructed = shifted_spectrum.waveform();
         let reconstructed = reconstructed.slice(..self.window_width);
 
+        self.math_elapsed = math_start.elapsed();
+
         TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.label(format!(
                 "Frequency Resolution: {} Hz",
@@ -385,6 +412,22 @@ impl App for Loid {
         });
 
         CentralPanel::default().show(ctx, |ui| {
+            let point_line = |ui: &mut PlotUi, name: &str, series: Values| {
+                if self.line {
+                    let line = Line::new(series).name(name);
+
+                    ui.line(if self.stems { line.fill(0.0) } else { line });
+                } else {
+                    let points = Points::new(series).name(name);
+
+                    ui.points(if self.stems {
+                        points.stems(0.0)
+                    } else {
+                        points
+                    });
+                }
+            };
+
             Plot::new("samples")
                 .height(ui.available_height() / 3.0)
                 .center_y_axis(true)
@@ -392,14 +435,15 @@ impl App for Loid {
                 .include_y(1.0)
                 .include_y(-1.0)
                 .show(ui, |ui| {
-                    ui.points(
-                        Points::new(Values::from_values_iter(
+                    point_line(
+                        ui,
+                        "Original waveform",
+                        Values::from_values_iter(
                             self.waveform.time_domain().map(|(x, y)| Value::new(x, y)),
-                        ))
-                        .name("Original samples")
-                        .stems(0.0),
+                        ),
                     );
 
+                    // TODO:
                     // ui.points(
                     //     Points::new(Values::from_values_iter(
                     //         reconstructed.time_domain().map(|(x, y)| Value::new(x, y)),
@@ -445,10 +489,10 @@ impl App for Loid {
                 .include_y(1.0)
                 .include_y(-1.0)
                 .show(ui, |ui| {
-                    ui.points(
-                        Points::new(Values::from_ys_f32(waveform.samples()))
-                            .name("Original Samples")
-                            .stems(0.0),
+                    point_line(
+                        ui,
+                        "Original samples",
+                        Values::from_ys_f32(waveform.samples()),
                     );
 
                     ui.line(
@@ -461,23 +505,23 @@ impl App for Loid {
                         .name("Window"),
                     );
 
-                    ui.points(
-                        Points::new(Values::from_values_iter(
+                    point_line(
+                        ui,
+                        "Windowed samples",
+                        Values::from_values_iter(
                             waveform
                                 .samples()
                                 .iter()
                                 .zip(self.window.into_iter(self.window_width))
                                 .enumerate()
                                 .map(|(i, (sample, w))| Value::new(i as f32, w * sample)),
-                        ))
-                        .name("Windowed samples")
-                        .stems(0.0),
+                        ),
                     );
 
-                    ui.points(
-                        Points::new(Values::from_ys_f32(reconstructed.samples()))
-                            .name("Shifted samples")
-                            .stems(0.0),
+                    point_line(
+                        ui,
+                        "Shifted samples",
+                        Values::from_ys_f32(reconstructed.samples()),
                     );
 
                     ui.vline(
