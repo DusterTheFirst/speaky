@@ -20,11 +20,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Install eframe dependencies
-        if: matrix.os == ubuntu-latest
+        if: matrix.os == 'ubuntu-latest'
         run: sudo apt install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libspeechd-dev libxkbcommon-dev libssl-dev
      
       - name: Install cpal Dependencies
-        if: matrix.os == ubuntu-latest
+        if: matrix.os == 'ubuntu-latest'
         run: sudo apt install libasound2-dev
 
       - name: Stable Rust with clippy
