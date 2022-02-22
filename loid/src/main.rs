@@ -42,20 +42,6 @@ fn main() {
     // Use console error panic hook until we need to upgrade to our custom one
     console_error_panic_hook::set_once();
 
-    let hash = web_sys::window()
-        .expect("no global `window` exists")
-        .location()
-        .hash()
-        .expect("unable to get location hash");
-
-    if !hash.is_empty() {
-        let hash = js_sys::decode_uri_component(&hash[1..]).expect("amongus");
-        web_sys::console::error_1(&hash.into());
-        // TODO: more cool message
-
-        return;
-    }
-
     let app = match init() {
         Ok(app) => app,
         Err(err) => {
@@ -69,30 +55,6 @@ fn main() {
             return;
         }
     };
-
-    // Upgrade to bigger panic handler to detach egui
-    // TODO: raise issue in egui_web about this?
-    // TODO: unregister all event listeners on panic
-    // std::panic::set_hook(Box::new(|panic| {
-    //     // FIXME: DO NOT PANIC IN PANIC HANDLER
-    //     let window = web_sys::window().expect("no global `window` exists");
-
-    //     let location = window.location();
-
-    //     // TODO:
-    //     // location
-    //     //     .set_hash(
-    //     //         &js_sys::encode_uri_component(&format!("{panic}"))
-    //     //             .as_string()
-    //     //             .expect("JsString is a string"),
-    //     //     )
-    //     //     .expect("unable to get location hash");
-
-    //     // location.reload().expect("unable to reload");
-
-    //     // FIXME: prevent normal panic hook from running
-    // }));
-
 
     match eframe::start_web("egui_canvas", Box::new(app)) {
         Ok(()) => {
