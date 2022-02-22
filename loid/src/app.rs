@@ -13,12 +13,13 @@ use common::{
     color_eyre,
     rodio::{buffer::SamplesBuffer, source::SineWave, OutputStream, Sink, Source},
     spectrum::{Spectrum, Waveform, Window},
+    tracing::info,
 };
 use eframe::{
     egui::{
         plot::{Bar, BarChart, Legend, Line, Plot, PlotUi, Points, Text, VLine, Value, Values},
-        Align, Align2, Button, CentralPanel, Color32, CtxRef, Label, Layout, ScrollArea, SidePanel,
-        Slider, TextStyle, TopBottomPanel,
+        Align2, Button, CentralPanel, Color32, CtxRef, Label, ScrollArea, SidePanel, Slider,
+        TextStyle, TopBottomPanel,
     },
     epi::{App, Frame},
 };
@@ -136,6 +137,9 @@ impl Application {
     // }
 
     fn play(&self, samples: &[f32], frame: Frame) {
+        // FIXME: Broken recently
+        info!("Playing {} samples", samples.len());
+
         let duration = Duration::from_millis(10);
 
         let samples_per_duration =
