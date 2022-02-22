@@ -913,6 +913,7 @@ dependencies = [
  "console_error_panic_hook",
  "eframe",
  "instant",
+ "js-sys",
  "snmalloc-rs",
  "strip-ansi-escapes",
  "web-sys",

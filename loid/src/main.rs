@@ -39,23 +39,22 @@ fn main() -> color_eyre::Result<()> {
 /// You can add more callbacks like this if you want to call in to your code.
 #[cfg(target_arch = "wasm32")]
 fn main() {
-    std::panic::set_hook(Box::new(|panic| {
-        // FIXME: DO NOT PANIC IN PANIC HANDLER
-        let window = web_sys::window().expect("no global `window` exists");
-        let document = window.document().expect("should have a document on window");
+    // Use console error panic hook until we need to upgrade to our custom one
+    console_error_panic_hook::set_once();
 
-        let canvas = document
-            .get_element_by_id("egui_canvas")
-            .expect("egui_canvas does not exist");
-        canvas.remove();
+    let hash = web_sys::window()
+        .expect("no global `window` exists")
+        .location()
+        .hash()
+        .expect("unable to get location hash");
 
-        let text_agent = document
-            .get_element_by_id("egui_text_agent")
-            .expect("egui_text_agent does not exist");
-        text_agent.remove();
+    if !hash.is_empty() {
+        let hash = js_sys::decode_uri_component(&hash[1..]).expect("amongus");
+        web_sys::console::error_1(&hash.into());
+        // TODO: more cool message
 
-        web_sys::console::error_1(&format!("{panic}").into())
-    }));
+        return;
+    }
 
     let app = match init() {
         Ok(app) => app,
@@ -71,6 +70,30 @@ fn main() {
         }
     };
 
+    // Upgrade to bigger panic handler to detach egui
+    // TODO: raise issue in egui_web about this?
+    // TODO: unregister all event listeners on panic
+    // std::panic::set_hook(Box::new(|panic| {
+    //     // FIXME: DO NOT PANIC IN PANIC HANDLER
+    //     let window = web_sys::window().expect("no global `window` exists");
+
+    //     let location = window.location();
+
+    //     // TODO:
+    //     // location
+    //     //     .set_hash(
+    //     //         &js_sys::encode_uri_component(&format!("{panic}"))
+    //     //             .as_string()
+    //     //             .expect("JsString is a string"),
+    //     //     )
+    //     //     .expect("unable to get location hash");
+
+    //     // location.reload().expect("unable to reload");
+
+    //     // FIXME: prevent normal panic hook from running
+    // }));
+
+
     match eframe::start_web("egui_canvas", Box::new(app)) {
         Ok(()) => {
             info!("eframe successfully started");
@@ -79,8 +102,4 @@ fn main() {
             error!(?error, "eframe encountered an error");
         }
     }
-
-    panic!()
-
-    // TODO: unregister all event listeners on panic
 }
