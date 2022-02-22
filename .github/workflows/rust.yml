@@ -69,7 +69,7 @@ jobs:
           profile: minimal
           toolchain: stable
       - name: Install trunk
-        run: wget -qO- https://github.com/thedodd/trunk/releases/download/$VERSION/trunk-x86_64-unknown-linux-gnu.tar.gz | tar -xzf-
+        run: wget -qO- "https://github.com/thedodd/trunk/releases/download/$VERSION/trunk-x86_64-unknown-linux-gnu.tar.gz" | tar -xzf-
       - uses: actions/checkout@v2
       - name: Build Loid
         working-directory: loid
