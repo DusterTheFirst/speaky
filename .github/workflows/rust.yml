@@ -36,7 +36,8 @@ jobs:
             - name: Build
               uses: actions-rs/cargo@v1
               with:
-                  command: build --all-features --all-targets
+                  command: check
+                  args: --all-features --all-targets
 
     # Clippy on web?
     clippy:
