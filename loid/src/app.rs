@@ -83,7 +83,7 @@ impl Application {
             full_spectrum: false,
             phase: false,
             decibels: false,
-            line: false,
+            line: true,
             stems: true,
 
             cursor: 0,

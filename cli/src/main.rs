@@ -2,7 +2,7 @@
 #![deny(clippy::unwrap_used)]
 
 use common::{
-    color_eyre::{eyre::Context, self},
+    color_eyre::{self, eyre::Context},
     rodio::{OutputStream, Sink},
     tts::{load_language, setup_tts, synthesize},
 };

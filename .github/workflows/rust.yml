@@ -1,0 +1,73 @@
+on: [push, pull_request]
+
+name: CI
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Security audit
+        uses: actions-rs/audit-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  clippy:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Stable Rust with clippy
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          components: clippy
+      - uses: actions/checkout@v2
+      - name: Annotate commit with clippy warnings
+        uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          args: --all-features
+
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Stable Rust with rustfmt
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          components: rustfmt
+      - uses: actions/checkout@v2
+      - name: Check formatting
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --check
+
+  deploy-loid:
+    if: github.ref == "refs/heads/main"
+    runs-on: ubuntu-latest
+    needs: [audit, clippy]
+    env:
+      TRUNK_VERSION: "v0.14.0"
+    steps:
+      - name: Stable Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+      - name: Install trunk
+        run: wget -qO- https://github.com/thedodd/trunk/releases/download/$VERSION/trunk-x86_64-unknown-linux-gnu.tar.gz | tar -xzf-
+      - uses: actions/checkout@v2
+      - name: Build Loid
+        working-directory: loid
+        run: trunk build --release
+      - name: Deploy Loid
+        uses: JamesIves/github-pages-deploy-action@v4.2.5
+        with:
+          branch: dist-loid
+          folder: loid/dist
+        
