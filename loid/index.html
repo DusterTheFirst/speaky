@@ -3,15 +3,23 @@
     <head>
         <meta charset="UTF-8">
         <meta http-equiv="X-UA-Compatible" content="IE=edge">
+
         <!-- Disable Scaling -->
         <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-        <title>TODO:</title>
+
+        <title>Toy Vocoder - dusterthefirst</title>
 
         <!-- Styling -->
-        <link data-trunk data-inline rel="scss" href="./assets/style.scss">
+        <link data-trunk data-inline rel="scss" href="./web/style.scss">
+
+        <!-- Service Worker -->
+        <!-- TODO: https://github.com/thedodd/trunk/issues/311 -->
+
+        <!-- Trunk -->
+        <base data-trunk-public-url/>
     </head>
     <body>
+        <!-- egui drawing area -->
         <canvas id="egui_canvas"></canvas>
-        <!-- TODO: https://github.com/emilk/eframe_template/blob/master/docs/index.html -->
     </body>
 </html>
