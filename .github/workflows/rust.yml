@@ -14,10 +14,19 @@ jobs:
 
   clippy:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
+      - name: Install eframe dependencies
+        if: matrix.os == ubuntu-latest
+        run: sudo apt install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libspeechd-dev libxkbcommon-dev libssl-dev
+     
+      - name: Install cpal Dependencies
+        if: matrix.os == ubuntu-latest
+        run: sudo apt install libasound2-dev
+
       - name: Stable Rust with clippy
         uses: actions-rs/toolchain@v1
         with:
@@ -50,7 +59,7 @@ jobs:
   deploy-loid:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    needs: [audit, clippy]
+    needs: [clippy] # TODO: depend on audit?
     env:
       TRUNK_VERSION: "v0.14.0"
     steps:
