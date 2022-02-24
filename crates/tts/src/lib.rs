@@ -1,8 +1,14 @@
+#![deny(clippy::unwrap_used, clippy::expect_used)]
+#![warn(missing_copy_implementations, missing_debug_implementations)]
+
+use audio::{cpal::Sample, waveform::Waveform};
 use color_eyre::eyre::eyre;
-use rodio::buffer::SamplesBuffer;
 use std::{path::Path, rc::Rc};
 use tracing::info;
 use ttspico::{Engine, EngineStatus, System, Voice};
+
+// #[cfg(target_arch = "wasm32")]
+// compile_error!("`tts` can not be used on 'wasm32' platforms, yet");
 
 // TODO: better API
 
@@ -56,7 +62,7 @@ pub struct TTSResources {
 
 #[tracing::instrument]
 pub fn load_language(lang: &str) -> Result<TTSResources, String> {
-    let lang_dir = Path::new("./lang");
+    let lang_dir = Path::new("./_lang");
 
     if !lang_dir.exists() {
         return Err("languages directory does not exist".to_string());
@@ -104,7 +110,7 @@ pub fn load_language(lang: &str) -> Result<TTSResources, String> {
 }
 
 #[tracing::instrument(skip(engine))]
-pub fn synthesize(engine: &mut Engine, text: &str) -> color_eyre::Result<SamplesBuffer<i16>> {
+pub fn synthesize(engine: &mut Engine, text: &str) -> color_eyre::Result<Waveform<'static>> {
     // 5. Put (UTF-8) text to be spoken into the engine
     // See `Engine::put_text()` for more details.
     let mut text_bytes = text.as_bytes();
@@ -129,12 +135,12 @@ pub fn synthesize(engine: &mut Engine, text: &str) -> color_eyre::Result<Samples
             .get_data(&mut pcm_buf[..])
             .map_err(|err| eyre!("failed to get pico pcm data: {err}"))?;
 
-        pcm_data.extend(&pcm_buf[..n_written]);
+        pcm_data.extend(pcm_buf[..n_written].iter().map(|sample| sample.to_f32()));
 
         if status == EngineStatus::Idle {
             break;
         }
     }
 
-    Ok(SamplesBuffer::new(1, 16_000, pcm_data))
+    Ok(Waveform::new(pcm_data, 16_000))
 }

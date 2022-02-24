@@ -1,12 +1,10 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used)]
 
-use common::{
-    color_eyre::{self, eyre::Context},
-    rodio::{OutputStream, Sink},
-    tts::{load_language, setup_tts, synthesize},
-};
+use color_eyre::{self, eyre::Context};
+use rodio::{buffer::SamplesBuffer, OutputStream, Sink};
 use std::io::{self, Write};
+use tts::{load_language, setup_tts, synthesize};
 
 fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
@@ -48,7 +46,13 @@ fn main() -> color_eyre::Result<()> {
 
         let line = line.trim_end();
 
-        sink.append(synthesize(&mut engine, line)?);
+        let waveform = synthesize(&mut engine, line)?;
+
+        sink.append(SamplesBuffer::new(
+            1,
+            waveform.sample_rate(),
+            waveform.samples(),
+        ));
 
         sink.sleep_until_end();
     }

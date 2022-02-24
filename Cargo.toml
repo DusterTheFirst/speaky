@@ -1,12 +1,21 @@
 [workspace]
-members = ["loid", "cli", "common"]
+resolver = "2"
+members = ["crates/*", "apps/*"]
 
 [profile.dev]
 opt-level = 2
 
 [profile.release]
 debug = 1
+
+[profile.lto]
+inherits = "release"
 lto = "thin"
+
+[profile.abort]
+inherits = "release"
+panic="abort"
 
 [patch.crates-io]
 microfft = { git = "https://gitlab.com/teskje/microfft-rs.git", rev = "f783b1effe66a24984f46b3fccca00d18fda5970" }
+eframe = { path = "../egui/eframe" }

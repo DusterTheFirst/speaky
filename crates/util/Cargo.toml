@@ -1,0 +1,15 @@
+[package]
+name = "util"
+version = "0.0.0"
+edition = "2021"
+
+publish = false
+
+[dependencies]
+color-eyre = "0.6.0" # TODO: better error handling
+tracing = "0.1.31"
+tracing-error = "0.2.0"
+tracing-subscriber = { version = "0.3.8", features = ["env-filter"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tracing-wasm = "0.2.1"

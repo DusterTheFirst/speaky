@@ -1,53 +1,21 @@
+#![forbid(unsafe_code)]
+#![deny(clippy::unwrap_used, clippy::expect_used)]
+#![warn(missing_copy_implementations, missing_debug_implementations)]
+
 use std::{
-    borrow::Cow,
     cmp::Ordering,
     f32::consts,
     fmt::{self, Display},
     iter,
     ops::Range,
-    slice::SliceIndex,
 };
 
-use num_complex::Complex;
+use audio::waveform::Waveform;
+pub use num_complex::Complex;
 
-use crate::spectrum::fft::cfft;
+mod fft;
 
-mod fft {
-    use num_complex::Complex;
-
-    macro_rules! variable_width_fft {
-        (
-            use $algor:path;
-
-            match $samples:ident in [
-                $($num:literal),+
-            ]
-        ) => {
-            match $samples.len() {
-                $(
-                    $num => paste::paste! {{
-                        [<$algor _ $num>](TryFrom::<&mut [Complex<f32>]>::try_from($samples).expect(concat!("spectrum.len() != ", $num))) as &mut [Complex<f32>]
-                    }},
-                )+
-                _ => unimplemented!("unsupported width"),
-            }
-        };
-    }
-
-    pub fn cfft(samples: &mut [Complex<f32>]) {
-        use microfft::complex::*;
-
-        variable_width_fft! {
-            use cfft;
-
-            match samples in [
-                2, 4, 8, 16, 32, 64,
-                128, 256, 512, 1024,
-                2048, 4096, 8192, 16384
-            ]
-        };
-    }
-}
+use fft::cfft;
 
 // pub fn pitch_change(samples: &[f32])
 
@@ -233,7 +201,7 @@ impl<'w> Spectrum<'w> {
     }
 
     pub fn freq_resolution(&self) -> f64 {
-        (1.0 / self.width as f64) * self.waveform.sample_rate as f64
+        (1.0 / self.width as f64) * self.waveform.sample_rate() as f64
     }
 
     pub fn freq_from_bucket(&self, bucket: usize) -> f64 {
@@ -245,7 +213,7 @@ impl<'w> Spectrum<'w> {
     }
 
     pub fn bucket_from_freq(&self, freq: f64) -> usize {
-        ((freq * self.width as f64) / self.waveform.sample_rate as f64).round() as usize
+        ((freq * self.width as f64) / self.waveform.sample_rate() as f64).round() as usize
     }
 
     // TODO: signed shift?
@@ -275,71 +243,31 @@ impl<'w> Spectrum<'w> {
 
         cfft(&mut spectrum);
 
-        Waveform {
-            sample_rate: self.waveform.sample_rate,
-            samples: Cow::Owned(
-                spectrum
-                    .into_iter()
-                    .map(|complex| complex.im / self.width as f32)
-                    .collect(),
-            ),
-        }
+        Waveform::new(
+            spectrum
+                .into_iter()
+                .map(|complex| complex.im / self.width as f32)
+                .collect(),
+            self.waveform.sample_rate(),
+        )
     }
 }
 
-#[derive(Debug)]
-pub struct Waveform<'s> {
-    samples: Cow<'s, [f32]>,
-    sample_rate: u32,
+mod sealed {
+    pub trait Sealed {}
 }
 
-impl Waveform<'_> {
-    pub fn new(samples: Vec<f32>, sample_rate: u32) -> Self {
-        Self {
-            samples: Cow::Owned(samples),
-            sample_rate,
-        }
-    }
+impl<'w> sealed::Sealed for Waveform<'w> {}
 
-    pub fn slice(&self, range: impl SliceIndex<[f32], Output = [f32]>) -> Waveform {
-        Waveform {
-            sample_rate: self.sample_rate,
-            samples: Cow::Borrowed(&self.samples[range]),
-        }
-    }
-
-    pub fn samples(&self) -> &[f32] {
-        &self.samples
-    }
-
-    pub fn len(&self) -> usize {
-        self.samples.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.samples.is_empty()
-    }
-
-    pub fn sample_rate(&self) -> u32 {
-        self.sample_rate
-    }
-
-    pub fn time_from_sample(&self, sample: usize) -> f32 {
-        sample as f32 / self.sample_rate as f32
-    }
-
-    pub fn time_domain(&self) -> impl Iterator<Item = (f32, f32)> + '_ {
-        self.samples
-            .iter()
-            .enumerate()
-            .map(|(sample, x)| (self.time_from_sample(sample), *x))
-    }
+pub trait WaveformSpectrum: sealed::Sealed {
+    #[must_use]
+    fn spectrum(&self, window: Window, fft_width: usize) -> Spectrum;
 }
 
-impl Waveform<'_> {
+impl<'w> WaveformSpectrum for Waveform<'w> {
     // TODO: see if rfft would be worth using unsafe for over cfft
     #[must_use]
-    pub fn spectrum(&self, window: Window, fft_width: usize) -> Spectrum {
+    fn spectrum(&self, window: Window, fft_width: usize) -> Spectrum {
         assert!(
             self.len() <= fft_width,
             "{} is too many samples for a fft of width {fft_width}",

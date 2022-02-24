@@ -1,0 +1,12 @@
+[package]
+name = "tts"
+version = "0.0.0"
+edition = "2021"
+
+publish = false
+
+[dependencies]
+ttspico = "0.1.5"
+color-eyre = "0.6.0"          # TODO: better error handling
+tracing = "0.1.31"
+audio = { path = "../audio", features = ["cpal"] }

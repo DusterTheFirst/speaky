@@ -3,13 +3,11 @@
 mod app;
 
 use app::Application;
-use common::{
-    color_eyre::{self, eyre::Context},
-    install_tracing,
-    tracing::*,
-};
+use color_eyre::eyre::Context;
+use tracing::*;
+use util::install_tracing;
 
-fn init() -> color_eyre::Result<Application> {
+pub fn init() -> color_eyre::Result<Application> {
     #[cfg(not(target_arch = "wasm32"))]
     color_eyre::install().wrap_err("failed to install color_eyre")?;
 

@@ -1,0 +1,12 @@
+[package]
+name = "spectrum"
+version = "0.0.0"
+edition = "2021"
+
+publish = false
+
+[dependencies]
+microfft = { version = "0.4.0", features = ["size-16384"] }
+num-complex = "0.4.0"
+paste = "1.0.6"
+audio = { path = "../audio" }

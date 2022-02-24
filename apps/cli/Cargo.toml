@@ -1,0 +1,15 @@
+[package]
+name = "cli"
+version = "0.0.0"
+edition = "2021"
+
+publish = false
+
+[dependencies]
+color-eyre = "0.6.0"
+
+rodio = { version = "0.15.0", default-features = false }
+
+audio = { path = "../../crates/audio", features = ["io"] }
+tts = { path = "../../crates/tts" }
+util = { path = "../../crates/util" }

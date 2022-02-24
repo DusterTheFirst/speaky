@@ -1,17 +1,8 @@
+#![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 #![warn(missing_copy_implementations, missing_debug_implementations)]
 
 use color_eyre::eyre::Context;
-
-pub use color_eyre;
-pub use rodio;
-pub use tracing;
-
-pub mod audio;
-pub mod spectrum;
-
-#[cfg(not(target_arch = "wasm32"))]
-pub mod tts;
 
 pub fn install_tracing() -> color_eyre::Result<()> {
     use tracing_error::ErrorLayer;

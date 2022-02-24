@@ -1,11 +1,10 @@
 use color_eyre::eyre::{Context, ContextCompat};
 use cpal::{
-    traits::{HostTrait, StreamTrait},
+    traits::{DeviceTrait, HostTrait, StreamTrait},
     SampleRate, StreamConfig, StreamError,
 };
-use rodio::DeviceTrait;
 
-pub fn h() -> color_eyre::Result<(Vec<f32>, SampleRate)> {
+pub fn read_one_second() -> color_eyre::Result<(Vec<f32>, SampleRate)> {
     let host = cpal::default_host();
 
     let input_device = host

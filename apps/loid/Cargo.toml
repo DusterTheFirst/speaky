@@ -5,13 +5,20 @@ edition = "2021"
 publish = false
 
 [dependencies]
-eframe = "0.16.0"
-common = { path = "../common" }
+color-eyre = "0.6.0"
+tracing = "0.1.31"
+
+eframe = "0.17.0"
 snmalloc-rs = { version = "0.2.28", optional = true }
 # For WASM instant support
 instant = "0.1.12"
 
+audio = { path = "../../crates/audio" }
+spectrum = { path = "../../crates/spectrum" }
+util = { path = "../../crates/util" }
+
 [features]
+default = []
 snmalloc = ["snmalloc-rs"]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
