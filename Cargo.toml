@@ -19,3 +19,4 @@ panic="abort"
 [patch.crates-io]
 microfft = { git = "https://gitlab.com/teskje/microfft-rs.git", rev = "f783b1effe66a24984f46b3fccca00d18fda5970" }
 eframe = { path = "../egui/eframe" }
+# , git = "https://github.com/DusterTheFirst/egui", branch = "web-panic" }

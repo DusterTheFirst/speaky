@@ -11,7 +11,7 @@ tracing = "0.1.31"
 eframe = "0.17.0"
 snmalloc-rs = { version = "0.2.28", optional = true }
 # For WASM instant support
-instant = "0.1.12"
+instant = { version = "0.1.12", features = ["wasm-bindgen"] }
 
 audio = { path = "../../crates/audio" }
 spectrum = { path = "../../crates/spectrum" }
@@ -23,8 +23,6 @@ snmalloc = ["snmalloc-rs"]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1.5"
-# For WASM instant support
-instant = { version = "0.1.12", features = ["web-sys"] }
 web-sys = { version = "0.3.4", features = ["Document", "Element"] }
 js-sys = "0.3.56"
 strip-ansi-escapes = { git = "https://github.com/luser/strip-ansi-escapes", rev = "672ce55b1ca2bce8dccd4318de48947af7892dc2" }
