@@ -11,19 +11,20 @@ use std::{
 use audio::waveform::Waveform;
 use eframe::{
     egui::{
-        plot::{Bar, BarChart, Legend, Line, Plot, PlotUi, Points, Text, VLine, Value, Values},
-        Align2, Button, CentralPanel, Color32, Context, Label, RichText, ScrollArea, SidePanel,
-        Slider, TopBottomPanel,
+        Button, CentralPanel, Context, RichText, ScrollArea, SidePanel, Slider, TopBottomPanel,
     },
+    epaint::Vec2,
     epi::{App, Frame},
 };
 use instant::Instant;
-use spectrum::{Spectrum, WaveformSpectrum, Window};
+use spectrum::{WaveformSpectrum, Window};
+
+mod plot;
 
 pub struct Application {
-    math_elapsed: Duration,
+    math_elapsed: Option<Duration>,
 
-    waveform: Waveform<'static>,
+    waveform: Option<Waveform<'static>>,
 
     window: Window,
 
@@ -59,15 +60,13 @@ impl Application {
 
         // let sample_rate = speech.sample_rate();
         // let samples: Vec<f32> = speech.convert_samples().collect();
-        let samples = vec![];
-        let sample_rate = 1;
 
         // let (samples, SampleRate(sample_rate)) = audio::input::h()?;
 
         Ok(Application {
-            math_elapsed: Duration::ZERO,
+            math_elapsed: None,
 
-            waveform: Waveform::new(samples, sample_rate),
+            waveform: None,
 
             window: Window::Hann,
 
@@ -165,95 +164,55 @@ impl Application {
     //         }
     //     });
     // }
-
-    fn display_spectrum(
-        ui: &mut PlotUi,
-        spectrum: &Spectrum,
-        title: &str,
-        full_spectrum: bool,
-        phase: bool,
-        decibels: bool,
-    ) {
-        // TODO: DECIBELS
-
-        #[inline(always)]
-        fn map(
-            iterator: impl Iterator<Item = f32>,
-            freq: impl Fn(usize) -> f64,
-            db: impl Fn(f32) -> f32,
-        ) -> Vec<Bar> {
-            iterator
-                .enumerate()
-                .map(|(bucket, mag)| Bar::new(freq(bucket), db(mag) as f64))
-                .collect()
-        }
-
-        let db = |mag: f32| -> f32 {
-            if decibels {
-                20.0 * if mag == 0.0 { 0.0 } else { mag.log10() }
-            } else {
-                mag
-            }
-        };
-
-        let freq = |b| spectrum.freq_from_bucket(b);
-
-        let buckets = match (phase, full_spectrum) {
-            (true, true) => map(&mut spectrum.phases(), freq, db),
-            (true, false) => map(spectrum.phases_real(), freq, db),
-            (false, true) => map(spectrum.amplitudes(), freq, db),
-            (false, false) => map(spectrum.amplitudes_real(), freq, db),
-        };
-
-        ui.bar_chart(
-            BarChart::new(buckets)
-                .width(spectrum.freq_resolution())
-                .name(&title),
-        );
-
-        if !phase {
-            if let Some((bucket, max)) = spectrum.main_frequency() {
-                let freq = spectrum.freq_from_bucket(bucket);
-
-                ui.text(
-                    Text::new(
-                        Value::new(freq, db(max)),
-                        RichText::new(format!("{:.2}Hz", freq)).monospace(),
-                    )
-                    .anchor(Align2::CENTER_BOTTOM),
-                )
-            }
-        }
-    }
 }
 
 impl App for Application {
     fn update(&mut self, ctx: &Context, frame: &Frame) {
+        TopBottomPanel::top("nav_bar").show(ctx, |ui| {
+            eframe::egui::widgets::global_dark_light_mode_switch(ui);
+        });
+
         SidePanel::left("left_panel").show(ctx, |ui| {
             ScrollArea::vertical().show(ui, |ui| {
                 ui.heading("Rendering Statistics");
-                ui.horizontal_wrapped(|ui| {
-                    ui.add(
-                        Label::new(format!(
-                            "Last math: {:.4} ms",
-                            self.math_elapsed.as_millis()
-                        ))
-                        .wrap(false),
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+
+                    ui.label("Last math: ");
+                    ui.label(
+                        RichText::new(
+                            self.math_elapsed
+                                .map(|duration| format!("{:.4} ms", duration.as_millis()))
+                                .unwrap_or_else(|| "N/A".to_string()),
+                        )
+                        .monospace(),
                     );
-                    ui.add(
-                        Label::new(format!(
-                            "Last frame: {:.4} ms",
+                });
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+
+                    ui.label("Last frame: ");
+                    ui.label(
+                        RichText::new(format!(
+                            "{:.4}",
                             frame.info().cpu_usage.unwrap_or(0.0) * 1000.0
                         ))
-                        .wrap(false),
+                        .monospace(),
                     );
-                    ui.add(
-                        Label::new(format!(
-                            "Max refresh: {:.1} fps",
+                    ui.label(" ms");
+                });
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+
+                    ui.label("Max refresh: ");
+                    ui.label(
+                        RichText::new(format!(
+                            "{:.4}",
                             1.0 / frame.info().cpu_usage.unwrap_or(0.0)
                         ))
-                        .wrap(false),
+                        .monospace(),
                     );
+                    ui.label(" fps");
                 });
 
                 ui.separator();
@@ -292,13 +251,17 @@ impl App for Application {
                 ui.separator();
                 // TODO: disable during playback?
                 ui.add_enabled_ui(true, |ui| {
+                    // TODO: better handling of no waveform
+                    let waveform_len = self.waveform.as_ref().map(|w| w.len()).unwrap_or(0);
+
                     ui.heading("FFT");
                     ui.label("FFT Width");
                     ui.add(
                         Slider::new(
                             &mut self.fft_width,
-                            1..=(self.waveform.len().next_power_of_two().trailing_zeros() as u8
-                                - 1),
+                            1..=((waveform_len.next_power_of_two().trailing_zeros() as u8)
+                                .saturating_sub(1)
+                                .max(1)),
                         )
                         .prefix("2^")
                         .suffix(" samples"),
@@ -327,7 +290,7 @@ impl App for Application {
                             .logarithmic(true),
                     );
 
-                    let max_cursor = self.waveform.len() - (1 << self.fft_width) - 1;
+                    let max_cursor = waveform_len.saturating_sub((1 << self.fft_width) - 1);
                     self.cursor = self.cursor.min(max_cursor);
 
                     ui.label("Window Start");
@@ -345,7 +308,7 @@ impl App for Application {
 
                         if ui
                             .add_enabled(
-                                self.cursor + self.window_width + step <= self.waveform.len(),
+                                self.cursor + self.window_width + step <= waveform_len,
                                 Button::new("Next"),
                             )
                             .clicked()
@@ -399,186 +362,85 @@ impl App for Application {
             });
         });
 
-        let cursor = if self.follow_playback {
-            self.playback_head
-                .load(Ordering::SeqCst)
-                .min(self.waveform.len() - self.window_width - 1)
-        } else {
-            self.cursor
-        };
-
-        // Calculate FFT width in bytes
-        let fft_width = 1 << self.fft_width;
-
-        let math_start = Instant::now();
-
-        // Get the slice of the waveform to work on
-        let waveform = self.waveform.slice(cursor..(cursor + self.window_width));
-
-        // Get the frequency spectrum of the waveform
-        let spectrum = waveform.spectrum(self.window, fft_width);
-
-        // Shift the spectrum
-        let shifted_spectrum = spectrum.shift(spectrum.bucket_from_freq(self.shift));
-
-        let reconstructed = shifted_spectrum.waveform();
-        let reconstructed = reconstructed.slice(..self.window_width);
-
-        self.math_elapsed = math_start.elapsed();
-
-        TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            ui.label(format!(
-                "Frequency Resolution: {} Hz",
-                spectrum.freq_resolution()
-            ));
-
-            ui.label(format!("FFT algorithm: cfft_{}", fft_width));
-        });
-
-        CentralPanel::default().show(ctx, |ui| {
-            let point_line = |ui: &mut PlotUi, name: &str, series: Values| {
-                if self.line {
-                    let line = Line::new(series).name(name);
-
-                    ui.line(if self.stems { line.fill(0.0) } else { line });
-                } else {
-                    let points = Points::new(series).name(name);
-
-                    ui.points(if self.stems {
-                        points.stems(0.0)
-                    } else {
-                        points
-                    });
-                }
+        if let Some(waveform) = &self.waveform {
+            let cursor = if self.follow_playback {
+                self.playback_head
+                    .load(Ordering::SeqCst)
+                    .min(waveform.len() - self.window_width - 1)
+            } else {
+                self.cursor
             };
 
-            Plot::new("samples")
-                .height(ui.available_height() / 3.0)
-                .center_y_axis(true)
-                .legend(Legend::default())
-                .include_y(1.0)
-                .include_y(-1.0)
-                .show(ui, |ui| {
-                    point_line(
+            // Calculate FFT width in bytes
+            let fft_width = 1 << self.fft_width;
+
+            let math_start = Instant::now();
+
+            // Get the slice of the waveform to work on
+            let waveform = waveform.slice(cursor..(cursor + self.window_width));
+
+            // Get the frequency spectrum of the waveform
+            let spectrum = waveform.spectrum(self.window, fft_width);
+
+            // Shift the spectrum
+            let shifted_spectrum = spectrum.shift(spectrum.bucket_from_freq(self.shift));
+
+            let reconstructed = shifted_spectrum.waveform();
+            let reconstructed = reconstructed.slice(..self.window_width);
+
+            self.math_elapsed = Some(math_start.elapsed());
+
+            TopBottomPanel::top("top_panel").show(ctx, |ui| {
+                ui.label(format!(
+                    "Frequency Resolution: {} Hz",
+                    spectrum.freq_resolution()
+                ));
+
+                ui.label(format!("FFT algorithm: cfft_{}", fft_width));
+            });
+
+            CentralPanel::default().show(ctx, |ui| {
+                let plot_size = Vec2::new(ui.available_height() / 3.0, ui.available_width());
+
+                ui.allocate_ui(plot_size, |ui| {
+                    plot::waveform_display(
                         ui,
-                        "Original waveform",
-                        Values::from_values_iter(
-                            self.waveform.time_domain().map(|(x, y)| Value::new(x, y)),
-                        ),
-                    );
-
-                    // TODO:
-                    // ui.points(
-                    //     Points::new(Values::from_values_iter(
-                    //         reconstructed.time_domain().map(|(x, y)| Value::new(x, y)),
-                    //     ))
-                    //     .name("Reconstructed Samples")
-                    //     .stems(0.0),
-                    // );
-
-                    ui.vline(
-                        VLine::new(self.waveform.time_from_sample(cursor))
-                            .color(Color32::DARK_GREEN)
-                            .width(2.5)
-                            .name("Start of window"),
-                    );
-                    ui.vline(
-                        VLine::new(self.waveform.time_from_sample(cursor + self.window_width))
-                            .color(Color32::DARK_RED)
-                            .width(1.5)
-                            .name("End of window"),
-                    );
-                    ui.vline(
-                        VLine::new(
-                            self.waveform
-                                .time_from_sample(cursor + self.window_width / self.hop_frac),
-                        )
-                        .color(Color32::GOLD)
-                        .name("Start of next window"),
-                    );
-                    ui.vline(
-                        VLine::new(
-                            self.waveform
-                                .time_from_sample(self.playback_head.load(Ordering::SeqCst)),
-                        )
-                        .color(Color32::LIGHT_BLUE)
-                        .name("Playback head"),
-                    );
+                        &waveform,
+                        self.cursor,
+                        self.playback_head.load(Ordering::SeqCst),
+                        self.window_width,
+                        self.hop_frac,
+                        (self.line, self.stems),
+                    )
                 });
-
-            Plot::new("window_samples")
-                .height(ui.available_height() / 2.0)
-                .center_y_axis(true)
-                .legend(Legend::default())
-                .include_y(1.0)
-                .include_y(-1.0)
-                .show(ui, |ui| {
-                    point_line(
+                ui.allocate_ui(plot_size, |ui| {
+                    plot::window_display(
                         ui,
-                        "Original samples",
-                        Values::from_ys_f32(waveform.samples()),
-                    );
-
-                    ui.line(
-                        Line::new(Values::from_values_iter(
-                            self.window
-                                .into_iter(self.window_width)
-                                .enumerate()
-                                .map(|(i, w)| Value::new(i as f32, w)),
-                        ))
-                        .name("Window"),
-                    );
-
-                    point_line(
-                        ui,
-                        "Windowed samples",
-                        Values::from_values_iter(
-                            waveform
-                                .samples()
-                                .iter()
-                                .zip(self.window.into_iter(self.window_width))
-                                .enumerate()
-                                .map(|(i, (sample, w))| Value::new(i as f32, w * sample)),
-                        ),
-                    );
-
-                    point_line(
-                        ui,
-                        "Shifted samples",
-                        Values::from_ys_f32(reconstructed.samples()),
-                    );
-
-                    ui.vline(
-                        VLine::new((self.window_width / self.hop_frac) as f32)
-                            .name("Start of next window"),
-                    );
+                        &waveform,
+                        (self.window, self.window_width),
+                        &reconstructed,
+                        self.hop_frac,
+                        (self.line, self.stems),
+                    )
                 });
-
-            Plot::new("frequencies")
-                .height(ui.available_height())
-                .legend(Legend::default())
-                .center_y_axis(true)
-                .include_x(fft_width as f64)
-                .show(ui, |ui| {
-                    Self::display_spectrum(
+                ui.allocate_ui(plot_size, |ui| {
+                    plot::spectrum_display(
                         ui,
                         &spectrum,
-                        "Frequency spectrum",
-                        self.full_spectrum,
-                        self.phase,
-                        self.decibels,
-                    );
-
-                    Self::display_spectrum(
-                        ui,
                         &shifted_spectrum,
-                        "Shifted frequency spectrum",
                         self.full_spectrum,
                         self.phase,
                         self.decibels,
-                    );
+                    )
+                })
+            });
+        } else {
+            CentralPanel::default().show(ctx, |ui| {
+                ui.centered_and_justified(|ui| {
+                    ui.heading("No Waveform Loaded");
                 });
-        });
+            });
+        }
     }
 
     fn name(&self) -> &str {

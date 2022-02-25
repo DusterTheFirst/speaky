@@ -761,6 +761,7 @@ checksum = "6907e25393cdcc1f4f3f513d9aac1e840eb1cc341a0fccb01171f7d14d10b946"
 [[package]]
 name = "eframe"
 version = "0.17.0"
+source = "git+https://github.com/DusterTheFirst/egui?branch=web-panic#37dd927508852a064f94354390d68b4b5e7e68c5"
 dependencies = [
  "egui",
  "egui-winit",
@@ -772,6 +773,7 @@ dependencies = [
 [[package]]
 name = "egui"
 version = "0.17.0"
+source = "git+https://github.com/DusterTheFirst/egui?branch=web-panic#37dd927508852a064f94354390d68b4b5e7e68c5"
 dependencies = [
  "ahash 0.7.6",
  "epaint",
@@ -782,6 +784,7 @@ dependencies = [
 [[package]]
 name = "egui-winit"
 version = "0.17.0"
+source = "git+https://github.com/DusterTheFirst/egui?branch=web-panic#37dd927508852a064f94354390d68b4b5e7e68c5"
 dependencies = [
  "copypasta",
  "dark-light",
@@ -796,6 +799,7 @@ dependencies = [
 [[package]]
 name = "egui_glow"
 version = "0.17.0"
+source = "git+https://github.com/DusterTheFirst/egui?branch=web-panic#37dd927508852a064f94354390d68b4b5e7e68c5"
 dependencies = [
  "bytemuck",
  "egui",
@@ -812,6 +816,7 @@ dependencies = [
 [[package]]
 name = "egui_web"
 version = "0.17.0"
+source = "git+https://github.com/DusterTheFirst/egui?branch=web-panic#37dd927508852a064f94354390d68b4b5e7e68c5"
 dependencies = [
  "bytemuck",
  "egui",
@@ -828,6 +833,7 @@ dependencies = [
 [[package]]
 name = "emath"
 version = "0.17.0"
+source = "git+https://github.com/DusterTheFirst/egui?branch=web-panic#37dd927508852a064f94354390d68b4b5e7e68c5"
 dependencies = [
  "bytemuck",
 ]
@@ -856,6 +862,7 @@ dependencies = [
 [[package]]
 name = "epaint"
 version = "0.17.0"
+source = "git+https://github.com/DusterTheFirst/egui?branch=web-panic#37dd927508852a064f94354390d68b4b5e7e68c5"
 dependencies = [
  "ab_glyph",
  "ahash 0.7.6",
@@ -868,6 +875,7 @@ dependencies = [
 [[package]]
 name = "epi"
 version = "0.17.0"
+source = "git+https://github.com/DusterTheFirst/egui?branch=web-panic#37dd927508852a064f94354390d68b4b5e7e68c5"
 dependencies = [
  "egui",
  "tracing",

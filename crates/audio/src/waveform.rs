@@ -7,8 +7,8 @@ pub struct Waveform<'s> {
 }
 
 impl Waveform<'_> {
-    pub fn new(samples: Vec<f32>, sample_rate: u32) -> Self {
-        Self {
+    pub fn new(samples: Vec<f32>, sample_rate: u32) -> Waveform<'static> {
+        Waveform {
             samples: Cow::Owned(samples),
             sample_rate,
         }
