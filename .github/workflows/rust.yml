@@ -56,13 +56,13 @@ jobs:
                   target: wasm32-unknown-unknown
             - uses: actions/checkout@v2
             - name: Install trunk
-              working-directory: loid
+              working-directory: apps/loid
               run: wget -qO- "https://github.com/thedodd/trunk/releases/download/${TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz" | tar -xzf-
             - name: Build Loid
-              working-directory: loid
+              working-directory: apps/loid
               run: ./trunk build --release
             - name: Deploy Loid
               uses: JamesIves/github-pages-deploy-action@v4.2.5
               with:
                   branch: dist-loid
-                  folder: loid/dist
+                  folder: apps/loid/dist
