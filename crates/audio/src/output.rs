@@ -9,7 +9,7 @@ use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     PlayStreamError, Stream, StreamConfig,
 };
-use tracing::error;
+use tracing::{error, trace};
 
 use crate::waveform::Waveform;
 
@@ -49,30 +49,21 @@ impl AudioSink {
 
                     // Stream configuration
                     let config = dbg!(config.clone());
-
                     move |data: &mut [f32], _info| {
                         if working_samples.is_empty() {
-                            match samples_receiver.try_recv() {
-                                Ok(new_samples) => {
-                                    assert_eq!(new_samples.sample_rate(), config.sample_rate.0);
+                            let new_samples =
+                                samples_receiver.recv().expect("samples channel closed");
 
-                                    working_samples = new_samples.as_samples();
-                                }
-                                Err(_) => {
-                                    //TODO: do something different if disconnected instead of empty
+                            assert_eq!(new_samples.sample_rate(), config.sample_rate.0);
 
-                                    data.fill(0.0);
+                            trace!("Received {} new samples", new_samples.len());
 
-                                    return;
-                                }
-                            }
+                            working_samples = new_samples.as_samples();
                         }
-
-                        let length = data.len().min(working_samples.len());
 
                         // Happy path if one channel
                         if config.channels == 1 {
-                            tracing::info!("Happy path");
+                            let length = data.len().min(working_samples.len());
 
                             data.copy_from_slice(&working_samples[..length]);
 
@@ -82,10 +73,12 @@ impl AudioSink {
                             return;
                         }
 
-                        for (frame, value) in data
-                            .chunks_exact_mut(config.channels.into())
-                            .zip(working_samples.drain(..length).chain(iter::repeat(0.0)))
-                        {
+                        // Normal path for multi-channel
+                        let windows = data.chunks_exact_mut(config.channels.into());
+                        let length = windows.len().min(working_samples.len());
+                        let drain = working_samples.drain(..length);
+
+                        for (frame, value) in windows.zip(drain.chain(iter::repeat(0.0))) {
                             for sample in frame {
                                 *sample = value;
                             }
