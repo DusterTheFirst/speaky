@@ -8,7 +8,7 @@
         <title>Toy Vocoder - dusterthefirst</title>
 
         <!-- Styling -->
-        <style type="text/css">html{touch-action:manipulation}body{background:#909090}@media(prefers-color-scheme: dark){body{background:#404040}}html,body{overflow:hidden;margin:0 !important;padding:0 !important}canvas{margin-right:auto;margin-left:auto;display:block;position:absolute;top:0%;left:50%;transform:translate(-50%, 0%)}
+        <style type="text/css">html{touch-action:manipulation}body{background:#909090}@media(prefers-color-scheme: dark){body{background:#404040}}html,body{overflow:hidden;margin:0 !important;padding:0 !important}canvas{margin-right:auto;margin-left:auto;display:block;position:absolute;top:0%;left:50%;transform:translate(-50%, 0%)}body[data-panicked=true]{background-color:#ce2828}body[data-panicked=true] #panic{display:block}#panic{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%, -50%);background-color:#ce2828;color:#000;font-weight:bold;text-align:center;padding:1em 2em;border-radius:2em;pointer-events:none;z-index:1000000}#panic h1{margin:0}
 </style>
 
         <!-- Service Worker -->
@@ -17,10 +17,15 @@
         <!-- Trunk -->
         <base href="/">
     
-<link rel="preload" href="/index-eedae4d73bb2510_bg.wasm" as="fetch" type="application/wasm" crossorigin="">
-<link rel="modulepreload" href="/index-eedae4d73bb2510.js"></head>
+<link rel="preload" href="/index-99f02423d10d503e_bg.wasm" as="fetch" type="application/wasm" crossorigin="">
+<link rel="modulepreload" href="/index-99f02423d10d503e.js"></head>
     <body>
         <!-- egui drawing area -->
         <canvas id="egui_canvas"></canvas>
+        <div id="panic">
+            <h1>application encountered a panic!</h1>
+            <div>the application will no longer respond to user inputs</div>
+            <div>check the console for more information</div>
+        </div>
     
-<script type="module">import init from '/index-eedae4d73bb2510.js';init('/index-eedae4d73bb2510_bg.wasm');</script></body></html>
+<script type="module">import init from '/index-99f02423d10d503e.js';init('/index-99f02423d10d503e_bg.wasm');</script></body></html>
