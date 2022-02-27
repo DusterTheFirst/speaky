@@ -42,8 +42,16 @@ fn main() -> color_eyre::Result<()> {
 /// You can add more callbacks like this if you want to call in to your code.
 #[cfg(target_arch = "wasm32")]
 fn main() {
-    // Use console error panic hook until we need to upgrade to our custom one
-    console_error_panic_hook::set_once();
+    std::panic::set_hook(Box::new(|panic_info| {
+        // Try to show the panic in HTML
+        web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.body())
+            .and_then(|element| element.set_attribute("data-panicked", "true").ok());
+
+        // Use console error panic hook to send the info to the console
+        console_error_panic_hook::hook(panic_info);
+    }));
 
     let app = match init() {
         Ok(app) => app,

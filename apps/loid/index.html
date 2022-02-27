@@ -16,10 +16,15 @@
         <!-- TODO: https://github.com/thedodd/trunk/issues/311 -->
 
         <!-- Trunk -->
-        <base data-trunk-public-url/>
+        <base data-trunk-public-url />
     </head>
     <body>
         <!-- egui drawing area -->
         <canvas id="egui_canvas"></canvas>
+        <div id="panic">
+            <h1>application encountered a panic!</h1>
+            <div>the application will no longer respond to user inputs</div>
+            <div>check the console for more information</div>
+        </div>
     </body>
 </html>
