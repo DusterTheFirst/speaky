@@ -3,8 +3,7 @@ use std::{
     iter,
     sync::{
         atomic::{AtomicUsize, Ordering},
-        mpsc::{self, RecvError, Sender},
-        Arc,
+        Arc, mpsc::{Sender, self},
     },
 };
 
@@ -26,6 +25,8 @@ pub enum AudioSinkProgress {
 type AudioSinkCallback = Box<dyn Fn(AudioSinkProgress) + Send>;
 
 pub struct AudioSink {
+    // FIXME: channels are broken on web assembly due to lack of condvar support.
+    // TODO: use a mutex instead
     samples_sender: Sender<(Waveform<'static>, AudioSinkCallback)>,
     config: StreamConfig,
 
@@ -83,7 +84,7 @@ impl AudioSink {
                             ).ok();
                             working_callback(AudioSinkProgress::Finished);
 
-                            match samples_receiver.recv() {
+                            match  samples_receiver.recv() {
                                 Ok((new_samples, new_callback)) => {
                                     assert_eq!(new_samples.sample_rate(), config.sample_rate.0);
 
@@ -93,7 +94,7 @@ impl AudioSink {
                                     working_callback = new_callback;
                                     starting_samples = working_samples.len();
                                 },
-                                Err(RecvError) => {
+                                Err(_) => {
                                     debug!("Sample channel has hung up, looping until the stream closes");
 
                                     data.fill(0.0);
