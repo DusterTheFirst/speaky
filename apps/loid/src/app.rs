@@ -2,15 +2,15 @@
 
 use std::{
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
     time::Duration,
 };
 
 use audio::{
-    output::AudioSink,
-    waveform::{self, Waveform},
+    output::{AudioSink, AudioSinkProgress},
+    waveform::Waveform,
 };
 use eframe::{
     egui::{
@@ -21,6 +21,7 @@ use eframe::{
 };
 use instant::Instant;
 use spectrum::{WaveformSpectrum, Window};
+use tracing::warn;
 
 mod plot;
 
@@ -32,6 +33,7 @@ pub struct Application {
     waveform: Option<Waveform<'static>>,
     window: Window,
 
+    is_playing: Arc<AtomicBool>,
     playback_head: Arc<AtomicUsize>,
 
     follow_playback: bool,
@@ -60,6 +62,7 @@ impl Application {
 
             window: Window::Hann,
 
+            is_playing: Arc::new(AtomicBool::new(false)),
             playback_head: Arc::new(AtomicUsize::new(0)),
 
             follow_playback: true,
@@ -142,8 +145,7 @@ impl Application {
     //     }
     // }
 
-    // FIXME: Broken recently
-    // FIXME: use CPAL also broken on web
+    // FIXME: broken on web
     fn play(&self, waveform: &Waveform<'_>, frame: Frame) {
         tracing::info!(
             "Playing {} samples ({} seconds)",
@@ -151,38 +153,29 @@ impl Application {
             waveform.duration()
         );
 
-        self.audio_sink.queue(waveform);
+        let did_queue = self.audio_sink.queue(waveform, {
+            let playback_head = self.playback_head.clone();
+            let is_playing = self.is_playing.clone();
 
-        //     let duration = Duration::from_millis(10);
+            is_playing.store(true, Ordering::SeqCst);
 
-        //     let samples_per_duration =
-        //         (self.waveform.sample_rate() as f64 * duration.as_secs_f64()).round() as usize;
+            move |progress| {
+                match progress {
+                    AudioSinkProgress::Samples(progress) => {
+                        playback_head.store(progress, Ordering::SeqCst);
+                    }
+                    AudioSinkProgress::Finished => {
+                        playback_head.store(0, Ordering::SeqCst);
+                        is_playing.store(false, Ordering::SeqCst);
+                    }
+                };
+                frame.request_repaint();
+            }
+        });
 
-        // self.audio_sink.append(
-        //         SamplesBuffer::new(1, self.waveform.sample_rate(), samples).periodic_access(
-        //             duration,
-        //             {
-        //                 let playback_head = self.playback_head.clone();
-        //                 let frame = frame.clone();
-
-        //                 playback_head.store(0, Ordering::SeqCst);
-
-        //                 move |_signal| {
-        //                     playback_head.fetch_add(samples_per_duration, Ordering::SeqCst);
-        //                     frame.request_repaint()
-        //                 }
-        //             },
-        //         ),
-        //     );
-
-        //     thread::spawn({
-        //         let audio_sink = self.audio_sink.clone();
-
-        //         move || {
-        //             audio_sink.sleep_until_end();
-        //             frame.request_repaint();
-        //         }
-        //     });
+        if !did_queue {
+            warn!("Failed to queue waveform");
+        }
     }
 }
 
@@ -258,32 +251,30 @@ impl App for Application {
 
                 ui.separator();
                 ui.heading("Playback");
-                if ui
-                    .add_enabled(
-                        self.waveform.is_some(),
-                        //self.audio_sink.empty(),
-                        Button::new("Play Original"),
-                    )
-                    .clicked()
-                {
-                    self.play(
-                        self.waveform
-                            .as_ref()
-                            .expect("button cannot be pressed with no waveform"),
-                        frame.clone(),
-                    );
-                }
+                ui.add_enabled_ui(
+                    self.waveform.is_some() && !self.audio_sink.playing(),
+                    |ui| {
+                        if ui.button("Play Original").clicked() {
+                            self.play(
+                                self.waveform
+                                    .as_ref()
+                                    .expect("button cannot be pressed with no waveform"),
+                                frame.clone(),
+                            );
+                        }
 
-                if ui
-                    .add_enabled(
-                        false,
-                        // self.audio_sink.empty() && !self.reconstructed_samples.is_empty(),
-                        Button::new("Play Reconstructed"),
-                    )
-                    .clicked()
-                {
-                    // self.play(self.reconstructed_samples.as_ref(), frame.clone());
-                }
+                        if ui
+                            .add_enabled(
+                                false,
+                                // self.audio_sink.empty() && !self.reconstructed_samples.is_empty(),
+                                Button::new("Play Reconstructed"),
+                            )
+                            .clicked()
+                        {
+                            // self.play(self.reconstructed_samples.as_ref(), frame.clone());
+                        }
+                    },
+                );
 
                 if ui
                     .add_enabled(false, Button::new("Reconstruct Samples"))
@@ -336,7 +327,7 @@ impl App for Application {
                             .logarithmic(true),
                     );
 
-                    let max_cursor = waveform_len.saturating_sub((1 << self.fft_width) - 1);
+                    let max_cursor = waveform_len.saturating_sub(self.window_width + 1);
                     self.cursor = self.cursor.min(max_cursor);
 
                     ui.label("Window Start");
@@ -409,7 +400,7 @@ impl App for Application {
         });
 
         if let Some(waveform) = &self.waveform {
-            let cursor = if self.follow_playback {
+            let cursor = if self.follow_playback && self.is_playing.load(Ordering::SeqCst) {
                 self.playback_head
                     .load(Ordering::SeqCst)
                     .min(waveform.len() - self.window_width - 1)
@@ -453,7 +444,7 @@ impl App for Application {
                     plot::waveform_display(
                         ui,
                         waveform,
-                        self.cursor,
+                        cursor,
                         self.playback_head.load(Ordering::SeqCst),
                         self.window_width,
                         self.hop_frac,

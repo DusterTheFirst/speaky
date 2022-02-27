@@ -1,22 +1,39 @@
 use std::{
     fmt::{self, Debug},
     iter,
-    sync::mpsc::{self, Sender, TryRecvError},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc::{self, RecvError, Sender},
+        Arc,
+    },
 };
 
 use color_eyre::eyre::{Context, ContextCompat};
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
-    PlayStreamError, Stream, StreamConfig,
+    Stream, StreamConfig,
 };
-use tracing::{error, trace};
+use tracing::{debug, error, trace};
 
 use crate::waveform::Waveform;
 
+#[derive(Debug, Clone, Copy)]
+pub enum AudioSinkProgress {
+    Samples(usize),
+    Finished,
+}
+
+type AudioSinkCallback = Box<dyn Fn(AudioSinkProgress) + Send>;
+
 pub struct AudioSink {
-    output_stream: Stream,
+    samples_sender: Sender<(Waveform<'static>, AudioSinkCallback)>,
     config: StreamConfig,
-    samples_sender: Sender<Waveform<'static>>,
+
+    queue_length: Arc<AtomicUsize>,
+
+    // Field (drop) ordering here is very important, the sender must be dropped
+    // before the stream can be dropped to prevent deadlocking
+    _output_stream: Stream,
 }
 
 impl Debug for AudioSink {
@@ -38,28 +55,56 @@ impl AudioSink {
             .wrap_err("no default output config")?
             .into();
 
-        let (samples_sender, samples_receiver) = mpsc::channel::<Waveform<'static>>();
+        let (samples_sender, samples_receiver) =
+            mpsc::channel::<(Waveform<'static>, AudioSinkCallback)>();
+
+        let queue_length = Arc::new(AtomicUsize::new(0));
 
         let output_stream = output_device
             .build_output_stream(
                 &config,
                 {
                     // Mutable closure state
+                    let mut starting_samples = 0;
                     let mut working_samples = Vec::new();
+                    let mut working_callback: AudioSinkCallback = Box::new(|_| {}); // TODO: Option?
 
-                    // Stream configuration
-                    let config = dbg!(config.clone());
+                    // Immutable closure state
+                    let config = config.clone();
+                    let queue_length = queue_length.clone();
+
+                    // TODO: clean up this closure
                     move |data: &mut [f32], _info| {
                         if working_samples.is_empty() {
-                            let new_samples =
-                                samples_receiver.recv().expect("samples channel closed");
+                            queue_length.fetch_update(
+                                Ordering::SeqCst,
+                                Ordering::SeqCst,
+                                |queue_length| Some(queue_length.saturating_sub(1))
+                            ).ok();
+                            working_callback(AudioSinkProgress::Finished);
 
-                            assert_eq!(new_samples.sample_rate(), config.sample_rate.0);
+                            match samples_receiver.recv() {
+                                Ok((new_samples, new_callback)) => {
+                                    assert_eq!(new_samples.sample_rate(), config.sample_rate.0);
 
-                            trace!("Received {} new samples", new_samples.len());
+                                    trace!("Received {} new samples", new_samples.len());
 
-                            working_samples = new_samples.as_samples();
+                                    working_samples = new_samples.as_samples();
+                                    working_callback = new_callback;
+                                    starting_samples = working_samples.len();
+                                },
+                                Err(RecvError) => {
+                                    debug!("Sample channel has hung up, looping until the stream closes");
+
+                                    data.fill(0.0);
+
+                                    return;
+                                },
+                            }
                         }
+
+                        // Run the callback
+                        working_callback(AudioSinkProgress::Samples(starting_samples - working_samples.len()));
 
                         // Happy path if one channel
                         if config.channels == 1 {
@@ -91,20 +136,39 @@ impl AudioSink {
             )
             .wrap_err("failed to build output stream")?;
 
+        output_stream
+            .play()
+            .wrap_err("failed to start the output stream")?;
+
         Ok(Self {
-            output_stream,
+            queue_length,
+            _output_stream: output_stream,
             samples_sender,
             config,
         })
     }
 
-    pub fn queue(&self, waveform: &Waveform<'_>) -> Result<bool, PlayStreamError> {
+    pub fn queue_length(&self) -> usize {
+        self.queue_length.load(Ordering::SeqCst)
+    }
+
+    pub fn playing(&self) -> bool {
+        self.queue_length() >= 1
+    }
+
+    pub fn queue(
+        &self,
+        waveform: &Waveform<'_>,
+        callback: impl Fn(AudioSinkProgress) + Send + 'static,
+    ) -> bool {
         let resampled_waveform = waveform.resample(self.config.sample_rate.0);
 
-        let send_result = self.samples_sender.send(resampled_waveform);
+        let send_result = self
+            .samples_sender
+            .send((resampled_waveform, Box::new(callback)));
 
-        self.output_stream.play()?;
+        self.queue_length.fetch_add(1, Ordering::SeqCst);
 
-        Ok(send_result.is_ok())
+        send_result.is_ok()
     }
 }
