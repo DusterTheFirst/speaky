@@ -101,8 +101,7 @@ pub fn window_display(
                 "Windowed samples",
                 Values::from_values_iter(
                     waveform
-                        .samples()
-                        .iter()
+                        .samples_iter()
                         .zip(window.into_iter(window_width))
                         .enumerate()
                         .map(|(i, (sample, w))| Value::new(i as f32, w * sample)),

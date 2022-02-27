@@ -8,7 +8,10 @@ use std::{
     time::Duration,
 };
 
-use audio::waveform::Waveform;
+use audio::{
+    output::AudioSink,
+    waveform::{self, Waveform},
+};
 use eframe::{
     egui::{
         Button, CentralPanel, Context, RichText, ScrollArea, SidePanel, Slider, TopBottomPanel,
@@ -24,8 +27,9 @@ mod plot;
 pub struct Application {
     math_elapsed: Option<Duration>,
 
-    waveform: Option<Waveform<'static>>,
+    audio_sink: AudioSink,
 
+    waveform: Option<Waveform<'static>>,
     window: Window,
 
     playback_head: Arc<AtomicUsize>,
@@ -46,25 +50,11 @@ pub struct Application {
 }
 
 impl Application {
-    pub fn initialize() -> color_eyre::Result<Self> {
-        // let (_stream, stream_handle) = OutputStream::try_default().unwrap();
-
-        // let sink = Sink::try_new(&stream_handle).unwrap();
-
-        // let resources = load_language("en-US").unwrap();
-
-        // let mut engine = setup_tts(resources).wrap_err("unable to setup tts engine")?;
-
-        // let speech = synthesize(&mut engine, "Some Body Once").wrap_err("unable to synthesize text")?;
-        // let speech = SineWave::new(120.0).take_duration(Duration::from_millis(300));
-
-        // let sample_rate = speech.sample_rate();
-        // let samples: Vec<f32> = speech.convert_samples().collect();
-
-        // let (samples, SampleRate(sample_rate)) = audio::input::h()?;
-
-        Ok(Application {
+    pub fn new(audio_sink: AudioSink) -> Self {
+        Self {
             math_elapsed: None,
+
+            audio_sink,
 
             waveform: None,
 
@@ -76,17 +66,41 @@ impl Application {
             full_spectrum: false,
             phase: false,
             decibels: false,
-            line: true,
+
+            // Use line plot on wasm32 platforms
+            line: cfg!(target_arch = "wasm32"),
             stems: true,
 
             cursor: 0,
+
+            // TODO: Better defaults
             fft_width: 11,
             window_width: 2048,
             hop_frac: 4,
 
             shift: 0.0,
-        })
+        }
     }
+}
+
+impl Application {
+    // pub fn initialize() -> color_eyre::Result<Self> {
+    // let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+
+    // let sink = Sink::try_new(&stream_handle).unwrap();
+
+    // let resources = load_language("en-US").unwrap();
+
+    // let mut engine = setup_tts(resources).wrap_err("unable to setup tts engine")?;
+
+    // let speech = synthesize(&mut engine, "Some Body Once").wrap_err("unable to synthesize text")?;
+    // let speech = SineWave::new(120.0).take_duration(Duration::from_millis(300));
+
+    // let sample_rate = speech.sample_rate();
+    // let samples: Vec<f32> = speech.convert_samples().collect();
+
+    // let (samples, SampleRate(sample_rate)) = audio::input::h()?;
+    // }
 
     // fn reconstruct_samples(&mut self) {
     //     self.reconstructed_samples.clear();
@@ -130,46 +144,71 @@ impl Application {
 
     // FIXME: Broken recently
     // FIXME: use CPAL also broken on web
-    // fn play(&self, samples: &[f32], frame: Frame) {
-    //     tracing::info!("Playing {} samples", samples.len());
+    fn play(&self, waveform: &Waveform<'_>, frame: Frame) {
+        tracing::info!(
+            "Playing {} samples ({} seconds)",
+            waveform.len(),
+            waveform.duration()
+        );
 
-    //     let duration = Duration::from_millis(10);
+        self.audio_sink.queue(waveform);
 
-    //     let samples_per_duration =
-    //         (self.waveform.sample_rate() as f64 * duration.as_secs_f64()).round() as usize;
+        //     let duration = Duration::from_millis(10);
 
-    //     self.audio_sink.append(
-    //         SamplesBuffer::new(1, self.waveform.sample_rate(), samples).periodic_access(
-    //             duration,
-    //             {
-    //                 let playback_head = self.playback_head.clone();
-    //                 let frame = frame.clone();
+        //     let samples_per_duration =
+        //         (self.waveform.sample_rate() as f64 * duration.as_secs_f64()).round() as usize;
 
-    //                 playback_head.store(0, Ordering::SeqCst);
+        // self.audio_sink.append(
+        //         SamplesBuffer::new(1, self.waveform.sample_rate(), samples).periodic_access(
+        //             duration,
+        //             {
+        //                 let playback_head = self.playback_head.clone();
+        //                 let frame = frame.clone();
 
-    //                 move |_signal| {
-    //                     playback_head.fetch_add(samples_per_duration, Ordering::SeqCst);
-    //                     frame.request_repaint()
-    //                 }
-    //             },
-    //         ),
-    //     );
+        //                 playback_head.store(0, Ordering::SeqCst);
 
-    //     thread::spawn({
-    //         let audio_sink = self.audio_sink.clone();
+        //                 move |_signal| {
+        //                     playback_head.fetch_add(samples_per_duration, Ordering::SeqCst);
+        //                     frame.request_repaint()
+        //                 }
+        //             },
+        //         ),
+        //     );
 
-    //         move || {
-    //             audio_sink.sleep_until_end();
-    //             frame.request_repaint();
-    //         }
-    //     });
-    // }
+        //     thread::spawn({
+        //         let audio_sink = self.audio_sink.clone();
+
+        //         move || {
+        //             audio_sink.sleep_until_end();
+        //             frame.request_repaint();
+        //         }
+        //     });
+    }
 }
 
 impl App for Application {
     fn update(&mut self, ctx: &Context, frame: &Frame) {
         TopBottomPanel::top("nav_bar").show(ctx, |ui| {
-            eframe::egui::widgets::global_dark_light_mode_switch(ui);
+            ui.horizontal(|ui| {
+                eframe::egui::widgets::global_dark_light_mode_switch(ui);
+                ui.menu_button("Waveform", |ui| {
+                    if ui.button("Load Sine Wave").clicked() {
+                        self.waveform =
+                            Some(Waveform::sine_wave(220.0, 0.5, Waveform::CD_SAMPLE_RATE));
+
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui
+                        .add_enabled(self.waveform.is_some(), Button::new("Clear"))
+                        .clicked()
+                    {
+                        self.waveform = None;
+
+                        ui.close_menu();
+                    }
+                });
+            });
         });
 
         SidePanel::left("left_panel").show(ctx, |ui| {
@@ -182,7 +221,9 @@ impl App for Application {
                     ui.label(
                         RichText::new(
                             self.math_elapsed
-                                .map(|duration| format!("{:.4} ms", duration.as_millis()))
+                                .map(|duration| {
+                                    format!("{:.4} ms", duration.as_nanos() as f32 / 1_000_000.0)
+                                })
                                 .unwrap_or_else(|| "N/A".to_string()),
                         )
                         .monospace(),
@@ -219,13 +260,18 @@ impl App for Application {
                 ui.heading("Playback");
                 if ui
                     .add_enabled(
-                        false,
+                        self.waveform.is_some(),
                         //self.audio_sink.empty(),
                         Button::new("Play Original"),
                     )
                     .clicked()
                 {
-                    // self.play(self.waveform.samples(), frame.clone());
+                    self.play(
+                        self.waveform
+                            .as_ref()
+                            .expect("button cannot be pressed with no waveform"),
+                        frame.clone(),
+                    );
                 }
 
                 if ui
@@ -377,10 +423,10 @@ impl App for Application {
             let math_start = Instant::now();
 
             // Get the slice of the waveform to work on
-            let waveform = waveform.slice(cursor..(cursor + self.window_width));
+            let window_waveform = waveform.slice(cursor..(cursor + self.window_width));
 
             // Get the frequency spectrum of the waveform
-            let spectrum = waveform.spectrum(self.window, fft_width);
+            let spectrum = window_waveform.spectrum(self.window, fft_width);
 
             // Shift the spectrum
             let shifted_spectrum = spectrum.shift(spectrum.bucket_from_freq(self.shift));
@@ -400,12 +446,13 @@ impl App for Application {
             });
 
             CentralPanel::default().show(ctx, |ui| {
-                let plot_size = Vec2::new(ui.available_height() / 3.0, ui.available_width());
+                let plot_size = ui.available_size();
+                let plot_size = Vec2::new(plot_size.x, plot_size.y / 3.0);
 
                 ui.allocate_ui(plot_size, |ui| {
                     plot::waveform_display(
                         ui,
-                        &waveform,
+                        waveform,
                         self.cursor,
                         self.playback_head.load(Ordering::SeqCst),
                         self.window_width,
@@ -416,7 +463,7 @@ impl App for Application {
                 ui.allocate_ui(plot_size, |ui| {
                     plot::window_display(
                         ui,
-                        &waveform,
+                        &window_waveform,
                         (self.window, self.window_width),
                         &reconstructed,
                         self.hop_frac,

@@ -9,10 +9,11 @@
         "hline",
         "microfft",
         "rfft",
+        "ringbuf",
         "rodio",
         "snmalloc",
         "ttspico",
         "vline"
     ],
-    "rust-analyzer.cargo.target": "wasm32-unknown-unknown"
+    // "rust-analyzer.cargo.target": "wasm32-unknown-unknown"
 }

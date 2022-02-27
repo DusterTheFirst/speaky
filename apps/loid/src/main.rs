@@ -3,6 +3,7 @@
 mod app;
 
 use app::Application;
+use audio::output::AudioSink;
 use color_eyre::eyre::Context;
 use tracing::*;
 use util::install_tracing;
@@ -13,9 +14,13 @@ pub fn init() -> color_eyre::Result<Application> {
 
     install_tracing().wrap_err("failed to install tracing_subscriber")?;
 
+    trace!("Setting up audio");
+
+    let audio_sink = AudioSink::new().wrap_err("failed to setup audio sink")?;
+
     info!("Starting Application");
 
-    Application::initialize()
+    Ok(Application::new(audio_sink))
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "snmalloc"))]

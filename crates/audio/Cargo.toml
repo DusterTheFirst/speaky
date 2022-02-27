@@ -7,6 +7,8 @@ publish = false
 
 [dependencies]
 color-eyre = "0.6.0" # TODO: better error handling
+tracing = "0.1.31"
+lerp = "0.4.0"
 
 cpal = { version = "0.13.5", optional = true }
 

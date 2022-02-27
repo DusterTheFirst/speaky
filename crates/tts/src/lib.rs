@@ -1,7 +1,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 #![warn(missing_copy_implementations, missing_debug_implementations)]
 
-use audio::{cpal::Sample, waveform::Waveform};
+use audio::{waveform::Waveform, Sample};
 use color_eyre::eyre::eyre;
 use std::{path::Path, rc::Rc};
 use tracing::info;

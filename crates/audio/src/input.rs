@@ -3,6 +3,7 @@ use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     SampleRate, StreamConfig, StreamError,
 };
+use tracing::error;
 
 pub fn read_one_second() -> color_eyre::Result<(Vec<f32>, SampleRate)> {
     let host = cpal::default_host();
@@ -25,7 +26,7 @@ pub fn read_one_second() -> color_eyre::Result<(Vec<f32>, SampleRate)> {
                 send.send(data.to_vec()).ok();
             },
             |err: StreamError| {
-                eprintln!("an error occurred on stream: {}", err);
+                error!(%err, "an error occurred on the input stream");
             },
         )
         .wrap_err("failed to build input stream")?;

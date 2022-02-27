@@ -4,7 +4,11 @@
 
 #[cfg(feature = "io")]
 pub mod input;
+
+#[cfg(feature = "io")]
+pub mod output;
+
 pub mod waveform;
 
 #[cfg(feature = "cpal")]
-pub extern crate cpal;
+pub use cpal::Sample;

@@ -282,9 +282,7 @@ impl<'w> WaveformSpectrum for Waveform<'w> {
 
         // Copy samples into the spectrum, filling any extra space with zeros
         let mut buckets = self
-            .samples()
-            .iter()
-            .copied()
+            .samples_iter()
             .zip(window)
             .map(|(sample, scale)| Complex::new(sample * scale, 0.0))
             .chain(iter::repeat(Complex::new(0.0, 0.0)))
