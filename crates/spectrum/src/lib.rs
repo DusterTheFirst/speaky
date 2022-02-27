@@ -138,17 +138,6 @@ pub fn scale_spectrum(
     }
 }
 
-/// Helper function to wrap a phase between -[π] and [π]
-///
-/// [π]: std::f32::consts::PI
-fn wrap_phase(phase: f32) -> f32 {
-    if phase >= 0.0 {
-        ((phase + consts::PI) % consts::TAU) - consts::PI
-    } else {
-        ((phase - consts::PI) % -consts::TAU) + consts::PI
-    }
-}
-
 #[derive(Debug)]
 pub struct Spectrum<'waveform> {
     width: usize,
