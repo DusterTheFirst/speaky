@@ -39,6 +39,18 @@ impl Waveform<'static> {
     }
 }
 
+#[cfg(test)]
+mod test {
+    use super::Waveform;
+
+    #[test]
+    fn as_samples() {
+        let waveform = Waveform::sine_wave(100.0, 1.0, Waveform::CD_SAMPLE_RATE);
+
+        assert_eq!(waveform.len(), waveform.as_samples().len());
+    }
+}
+
 impl Waveform<'_> {
     /// Prefer [`Self::as_samples`] if you have a waveform with a static lifetime
     /// or [`Self::samples`] if you do not need ownership

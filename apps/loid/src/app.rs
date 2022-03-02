@@ -3,7 +3,7 @@
 use std::{
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc,
+        Arc, Once,
     },
     time::Duration,
 };
@@ -157,15 +157,21 @@ impl Application {
             let playback_head = self.playback_head.clone();
             let is_playing = self.is_playing.clone();
 
-            is_playing.store(true, Ordering::SeqCst);
+            let once = Once::new();
 
             move |progress| {
                 match progress {
                     AudioSinkProgress::Samples(progress) => {
+                        dbg!(progress);
+
+                        once.call_once(|| {
+                            is_playing.store(true, Ordering::SeqCst);
+                        });
+
                         playback_head.store(progress, Ordering::SeqCst);
                     }
                     AudioSinkProgress::Finished => {
-                        playback_head.store(0, Ordering::SeqCst);
+                        // playback_head.store(0, Ordering::SeqCst);
                         is_playing.store(false, Ordering::SeqCst);
                     }
                 };
@@ -439,13 +445,15 @@ impl App for Application {
             CentralPanel::default().show(ctx, |ui| {
                 let plot_size = ui.available_size();
                 let plot_size = Vec2::new(plot_size.x, plot_size.y / 3.0);
+                
+                dbg!(waveform.len());
 
                 ui.allocate_ui(plot_size, |ui| {
                     plot::waveform_display(
                         ui,
                         waveform,
                         cursor,
-                        self.playback_head.load(Ordering::SeqCst),
+                        dbg!(self.playback_head.load(Ordering::SeqCst)),
                         self.window_width,
                         self.hop_frac,
                         (self.line, self.stems),

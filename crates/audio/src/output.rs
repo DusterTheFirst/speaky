@@ -3,7 +3,8 @@ use std::{
     iter,
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc, mpsc::{Sender, self},
+        mpsc::{self, Sender, TryRecvError},
+        Arc, Once,
     },
 };
 
@@ -74,17 +75,23 @@ impl AudioSink {
                     let config = config.clone();
                     let queue_length = queue_length.clone();
 
+                    let mut playing = false;
+
                     // TODO: clean up this closure
                     move |data: &mut [f32], _info| {
                         if working_samples.is_empty() {
-                            queue_length.fetch_update(
-                                Ordering::SeqCst,
-                                Ordering::SeqCst,
-                                |queue_length| Some(queue_length.saturating_sub(1))
-                            ).ok();
-                            working_callback(AudioSinkProgress::Finished);
+                            if playing {
+                                queue_length.fetch_update(
+                                    Ordering::SeqCst,
+                                    Ordering::SeqCst,
+                                    |queue_length| Some(queue_length.saturating_sub(1))
+                                ).ok();
+                                working_callback(AudioSinkProgress::Finished);
+                            }
 
-                            match  samples_receiver.recv() {
+                            playing = false;
+
+                            match samples_receiver.try_recv() {
                                 Ok((new_samples, new_callback)) => {
                                     assert_eq!(new_samples.sample_rate(), config.sample_rate.0);
 
@@ -94,17 +101,28 @@ impl AudioSink {
                                     working_callback = new_callback;
                                     starting_samples = working_samples.len();
                                 },
-                                Err(_) => {
-                                    debug!("Sample channel has hung up, looping until the stream closes");
-
+                                Err(e) => {
                                     data.fill(0.0);
+
+                                    match e {
+                                        TryRecvError::Empty => std::hint::spin_loop(),
+                                        TryRecvError::Disconnected => {
+                                            static ONCE: Once = Once::new();
+
+                                            ONCE.call_once(|| {
+                                                debug!("Sample channel has hung up, looping until the stream closes");
+                                            });
+                                        },
+                                    }
 
                                     return;
                                 },
                             }
                         }
+                        playing = true;
 
                         // Run the callback
+                        // TODO: Deal with resampling
                         working_callback(AudioSinkProgress::Samples(starting_samples - working_samples.len()));
 
                         // Happy path if one channel
