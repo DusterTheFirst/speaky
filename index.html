@@ -8,7 +8,7 @@
         <title>Toy Vocoder - dusterthefirst</title>
 
         <!-- Styling -->
-        <style type="text/css">html{touch-action:manipulation}body{background:#909090}@media(prefers-color-scheme: dark){body{background:#404040}}html,body{overflow:hidden;margin:0 !important;padding:0 !important}canvas{margin-right:auto;margin-left:auto;display:block;position:absolute;top:0%;left:50%;transform:translate(-50%, 0%)}body[data-panicked=true]{background-color:#ce2828}body[data-panicked=true] #panic{display:block}#panic{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%, -50%);background-color:#ce2828;color:#000;font-weight:bold;text-align:center;padding:1em 2em;border-radius:2em;pointer-events:none;z-index:1000000}#panic h1{margin:0}
+        <style type="text/css">html{touch-action:manipulation}:root{--margin-background: #909090;--text-color: #000000}@media(prefers-color-scheme: dark){body{--margin-background: #404040;--text-color: #eeeeee}}body{background:var(--margin-background)}html,body{overflow:hidden;margin:0 !important;padding:0 !important}canvas{margin-right:auto;margin-left:auto;display:block;position:absolute;top:0%;left:50%;transform:translate(-50%, 0%)}#panic{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%, -50%);background-color:var(--margin-background);color:var(--text-color);text-align:center;font-family:"Segoe UI",Tahoma,Geneva,Verdana,sans-serif;padding:1em 2em;border-radius:2em;pointer-events:none;z-index:1000000}#panic h1{margin-top:0;color:#ce2828;font-weight:bold}#panic button{background-color:#ce2828;color:#000;border:none;margin:1em;padding:.5em 1.5em;border-radius:10em;pointer-events:all}#panic button:hover{background-color:#791717;color:#eee}body[data-panicked=true]{background-color:#ce2828}body[data-panicked=true] #panic{display:block}
 </style>
 
         <!-- Service Worker -->
@@ -17,15 +17,16 @@
         <!-- Trunk -->
         <base href="/">
     
-<link rel="preload" href="/index-24593f4648ca7ae8_bg.wasm" as="fetch" type="application/wasm" crossorigin="">
-<link rel="modulepreload" href="/index-24593f4648ca7ae8.js"></head>
+<link rel="preload" href="/index-858ee32a050edbf1_bg.wasm" as="fetch" type="application/wasm" crossorigin="">
+<link rel="modulepreload" href="/index-858ee32a050edbf1.js"></head>
     <body>
         <!-- egui drawing area -->
         <canvas id="egui_canvas"></canvas>
         <div id="panic">
-            <h1>application encountered a panic!</h1>
-            <div>the application will no longer respond to user inputs</div>
-            <div>check the console for more information</div>
+            <h1>Application encountered a panic!</h1>
+            <div>The application will no longer respond to user inputs.</div>
+            <div>Check the developer console for more information.</div>
+            <button onclick="location.reload()">Reload</button>
         </div>
     
-<script type="module">import init from '/index-24593f4648ca7ae8.js';init('/index-24593f4648ca7ae8_bg.wasm');</script></body></html>
+<script type="module">import init from '/index-858ee32a050edbf1.js';init('/index-858ee32a050edbf1_bg.wasm');</script></body></html>
