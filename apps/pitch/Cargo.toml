@@ -1,0 +1,17 @@
+[package]
+name = "pitch"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+color-eyre = "0.6.0"
+tracing = "0.1.31"
+
+eframe = { version = "0.17.0", features = ["persistence"] }
+rfd = "0.8.0"
+
+ritelinked = { version = "0.3.2", features = ["serde"] }
+
+audio = { path = "../../crates/audio", features = ["io"] }
+spectrum = { path = "../../crates/spectrum" }
+util = { path = "../../crates/util" }

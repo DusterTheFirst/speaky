@@ -3,6 +3,9 @@ resolver = "2"
 members = ["crates/*", "apps/*"]
 
 [profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
 opt-level = 2
 
 [profile.release]
