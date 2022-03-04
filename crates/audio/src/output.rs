@@ -19,7 +19,7 @@ use crate::waveform::Waveform;
 
 #[derive(Debug, Clone, Copy)]
 pub enum AudioSinkProgress {
-    Samples(usize),
+    Samples(f32),
     Finished,
 }
 
@@ -122,8 +122,7 @@ impl AudioSink {
                         playing = true;
 
                         // Run the callback
-                        // TODO: Deal with resampling
-                        working_callback(AudioSinkProgress::Samples(starting_samples - working_samples.len()));
+                        working_callback(AudioSinkProgress::Samples((starting_samples - working_samples.len()) as f32 / starting_samples as f32));
 
                         // Happy path if one channel
                         if config.channels == 1 {

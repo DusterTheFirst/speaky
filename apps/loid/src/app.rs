@@ -156,22 +156,22 @@ impl Application {
         let did_queue = self.audio_sink.queue(waveform, {
             let playback_head = self.playback_head.clone();
             let is_playing = self.is_playing.clone();
+            let waveform_len = waveform.len() as f32;
 
             let once = Once::new();
 
             move |progress| {
                 match progress {
                     AudioSinkProgress::Samples(progress) => {
-                        dbg!(progress);
-
                         once.call_once(|| {
                             is_playing.store(true, Ordering::SeqCst);
                         });
 
-                        playback_head.store(progress, Ordering::SeqCst);
+                        playback_head
+                            .store((progress * waveform_len).round() as _, Ordering::SeqCst);
                     }
                     AudioSinkProgress::Finished => {
-                        // playback_head.store(0, Ordering::SeqCst);
+                        playback_head.store(waveform_len as _, Ordering::SeqCst);
                         is_playing.store(false, Ordering::SeqCst);
                     }
                 };
@@ -445,15 +445,13 @@ impl App for Application {
             CentralPanel::default().show(ctx, |ui| {
                 let plot_size = ui.available_size();
                 let plot_size = Vec2::new(plot_size.x, plot_size.y / 3.0);
-                
-                dbg!(waveform.len());
 
                 ui.allocate_ui(plot_size, |ui| {
                     plot::waveform_display(
                         ui,
                         waveform,
                         cursor,
-                        dbg!(self.playback_head.load(Ordering::SeqCst)),
+                        self.playback_head.load(Ordering::SeqCst),
                         self.window_width,
                         self.hop_frac,
                         (self.line, self.stems),
