@@ -3,18 +3,26 @@ html {
     touch-action: manipulation;
 }
 
-body {
+:root {
     /* Light mode background color for what is not covered by the egui canvas,
     or where the egui canvas is translucent. */
-    background: #909090;
+    --margin-background: #909090;
+
+    --text-color: #000000;
 }
 
 @media (prefers-color-scheme: dark) {
     body {
         /* Dark mode background color for what is not covered by the egui canvas,
         or where the egui canvas is translucent. */
-        background: #404040;
+        --margin-background: #404040;
+
+        --text-color: #eeeeee;
     }
+}
+
+body {
+    background: var(--margin-background);
 }
 
 /* Allow canvas to fill entire web page: */
@@ -36,13 +44,7 @@ canvas {
     transform: translate(-50%, 0%);
 }
 
-body[data-panicked = true] {
-    background-color: #ce2828;
-
-    #panic {
-        display: block;
-    }
-}
+$panic-red: #ce2828;
 
 #panic {
     display: none;
@@ -51,20 +53,47 @@ body[data-panicked = true] {
     left: 50%;
     transform: translate(-50%, -50%);
 
-    background-color: #ce2828;
-    color: #000;
+    background-color: var(--margin-background);
+    color: var(--text-color);
 
-    font-weight: bold;
     text-align: center;
-    
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+
     padding: 1em 2em;
     border-radius: 2em;
 
     pointer-events: none;
 
     h1 {
-        margin: 0;
+        margin-top: 0;
+        color: $panic-red;
+        font-weight: bold;
+    }
+
+    button {
+        background-color: $panic-red;
+        color: #000000;
+        border: none;
+
+        margin: 1em;
+        padding: 0.5em 1.5em;
+        border-radius: 10em;
+
+        pointer-events: all;
+
+        &:hover {
+            background-color: darken($panic-red, 20);
+            color: #eeeeee;
+        }
     }
 
     z-index: 1000000;
+}
+
+body[data-panicked="true"] {
+    background-color: $panic-red;
+
+    #panic {
+        display: block;
+    }
 }
