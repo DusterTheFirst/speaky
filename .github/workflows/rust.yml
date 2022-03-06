@@ -6,6 +6,9 @@ jobs:
     clippy:
         runs-on: ubuntu-latest
         steps:
+            - name: Update apt cache
+              run: sudo apt update
+
             - name: Install eframe dependencies
               run: sudo apt install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libspeechd-dev libxkbcommon-dev libssl-dev
 
