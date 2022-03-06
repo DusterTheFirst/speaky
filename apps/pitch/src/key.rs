@@ -1,10 +1,25 @@
-use std::{num::NonZeroU8, ops::Range};
+use std::{
+    fmt::{self, Display},
+    num::NonZeroU8,
+};
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct MusicalNote {
     letter: NoteLetter,
     accidental: Option<Accidental>,
     octave: u8,
+}
+
+impl Display for MusicalNote {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.letter)?;
+
+        if let Some(accidental) = self.accidental {
+            write!(f, "{accidental}")?;
+        }
+
+        write!(f, "{}", self.octave)
+    }
 }
 
 impl MusicalNote {
@@ -56,7 +71,7 @@ impl MusicalNote {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum Accidental {
     Sharp,
     Flat,
@@ -72,7 +87,22 @@ impl Accidental {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+impl Display for Accidental {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match (self, f.alternate()) {
+                (Accidental::Sharp, false) => '#',
+                (Accidental::Sharp, true) => '♯',
+                (Accidental::Flat, false) => 'b',
+                (Accidental::Flat, true) => '♭',
+            }
+        )
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum NoteLetter {
     A,
     B,
@@ -100,8 +130,15 @@ impl NoteLetter {
     }
 }
 
+impl Display for NoteLetter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Just use the debug format for display
+        write!(f, "{:?}", self)
+    }
+}
+
 // An integer piano key in the range 1 - 88
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
 pub struct PianoKey(NonZeroU8);
 
 impl PianoKey {

@@ -2,15 +2,17 @@ use std::{fs::File, path::PathBuf};
 
 use eframe::{
     egui::{
-        Button, CentralPanel, Context, DroppedFile, Frame, ScrollArea, Sense, TextFormat,
+        Button, CentralPanel, Context, DroppedFile, Frame, Id, ScrollArea, Sense, TextFormat,
         TextStyle, TopBottomPanel, Ui,
     },
     emath::Align2,
-    epaint::{text::LayoutJob, Color32, Pos2, Rect, Rounding, Shape, Stroke, Vec2},
+    epaint::{text::LayoutJob, Color32, FontId, Pos2, Rect, Rounding, Shape, Stroke, Vec2},
     epi::{self, App, Storage, APP_KEY},
 };
 use ritelinked::LinkedHashSet;
 use symphonia::core::{io::MediaSourceStream, probe::Hint};
+
+use crate::key::{Accidental, PianoKey};
 
 #[derive(Debug, Default)]
 pub struct Application {
@@ -27,7 +29,7 @@ impl Application {
         let stream = MediaSourceStream::new(Box::new(file), Default::default());
 
         let mut hint = Hint::new();
-        
+
         todo!();
 
         self.recently_opened_files.insert(path);
@@ -75,10 +77,6 @@ impl Application {
 }
 
 impl App for Application {
-    fn persist_native_window(&self) -> bool {
-        false
-    }
-
     fn update(&mut self, ctx: &Context, _frame: &epi::Frame) {
         TopBottomPanel::top("nav_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -163,9 +161,7 @@ impl App for Application {
                     let mut canvas = ui.available_rect_before_wrap();
                     canvas.max.y = f32::INFINITY;
 
-                    let response = ui.interact(canvas, ui.id(), Sense::click_and_drag());
-
-                    let key_size = 15.0;
+                    let key_height = 15.0;
                     const KEY_COUNT: usize = 88;
 
                     let left_margin = 20.0;
@@ -175,7 +171,7 @@ impl App for Application {
 
                     let mut items = vec![];
                     items.extend((0..KEY_COUNT).flat_map(|key| {
-                        let y = key as f32 * key_size;
+                        let y = key as f32 * key_height;
 
                         let min = Pos2::new(0.0, y) + offset;
 
@@ -186,7 +182,7 @@ impl App for Application {
                             ),
                             Shape::text(
                                 &ui.fonts(),
-                                min + Vec2::new(0.0, key_size / 2.0),
+                                min + Vec2::new(0.0, key_height / 2.0),
                                 Align2::LEFT_CENTER,
                                 format!("{key:2}"),
                                 TextStyle::Monospace.resolve(ui.style()),
@@ -194,26 +190,62 @@ impl App for Application {
                             ),
                         ]
                     }));
-                    {
-                        let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(30.0, key_size))
-                            .translate(offset + margin);
+                    items.extend((1..=88).map(|key_u8| {
+                        let key = PianoKey::new(key_u8).unwrap();
 
-                        let hovered = response.hover_pos().map_or(false, |pos| rect.contains(pos));
+                        let rect = Rect::from_min_size(
+                            Pos2::new(15.0 * key_u8 as f32, key_height * key_u8 as f32),
+                            Vec2::new(30.0, key_height),
+                        )
+                        .translate(offset + margin);
 
-                        items.push(Shape::rect_filled(
+                        let response = ui
+                            .interact(rect, Id::new(key), Sense::click_and_drag())
+                            .on_hover_ui_at_pointer(|ui| {
+                                let note = key.as_note(Accidental::Sharp);
+
+                                ui.label({
+                                    let mut job = LayoutJob::default();
+
+                                    job.append(
+                                        &note.letter().to_string(),
+                                        0.0,
+                                        TextFormat::simple(FontId::monospace(20.0), Color32::GRAY),
+                                    );
+                                    if let Some(accidental) = note.accidental() {
+                                        job.append(
+                                            &accidental.to_string(),
+                                            0.0,
+                                            TextFormat::simple(
+                                                FontId::monospace(20.0),
+                                                Color32::GRAY,
+                                            ),
+                                        );
+                                    }
+                                    job.append(
+                                        &note.octave().to_string(),
+                                        0.0,
+                                        TextFormat::simple(FontId::monospace(10.0), Color32::GRAY),
+                                    );
+
+                                    job
+                                });
+                            });
+
+                        Shape::rect_filled(
                             rect,
                             Rounding::same(2.0),
-                            if hovered {
+                            if response.hovered() {
                                 Color32::LIGHT_RED
                             } else {
                                 Color32::RED
                             },
-                        ));
-                    }
+                        )
+                    }));
 
                     ui.painter().extend(items);
 
-                    let height = key_size * KEY_COUNT as f32;
+                    let height = key_height * KEY_COUNT as f32;
 
                     let mut used_rect = canvas;
                     used_rect.max.y = used_rect.min.y + height.max(total_available_height);
@@ -224,10 +256,6 @@ impl App for Application {
         });
     }
 
-    fn name(&self) -> &str {
-        "Pitch"
-    }
-
     fn setup(&mut self, _ctx: &Context, _frame: &epi::Frame, storage: Option<&dyn Storage>) {
         if let Some(storage) = storage {
             self.recently_opened_files = epi::get_value(storage, APP_KEY).unwrap_or_default();
@@ -236,5 +264,13 @@ impl App for Application {
 
     fn save(&mut self, storage: &mut dyn Storage) {
         epi::set_value(storage, APP_KEY, &self.recently_opened_files);
+    }
+
+    fn name(&self) -> &str {
+        "Pitch"
+    }
+
+    fn persist_native_window(&self) -> bool {
+        false
     }
 }
