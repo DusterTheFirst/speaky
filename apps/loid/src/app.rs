@@ -186,6 +186,10 @@ impl Application {
 }
 
 impl App for Application {
+    fn persist_native_window(&self) -> bool {
+        false
+    }
+
     fn update(&mut self, ctx: &Context, frame: &Frame) {
         TopBottomPanel::top("nav_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {

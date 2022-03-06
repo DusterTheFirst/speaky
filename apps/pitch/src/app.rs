@@ -1,25 +1,85 @@
-use std::path::PathBuf;
+use std::{fs::File, path::PathBuf};
 
 use eframe::{
-    egui::{Button, CentralPanel, Context, TextFormat, TopBottomPanel},
-    epaint::{text::LayoutJob, Color32},
-    epi::{self, App, Frame, Storage, APP_KEY},
+    egui::{
+        Button, CentralPanel, Context, DroppedFile, Frame, ScrollArea, Sense, TextFormat,
+        TextStyle, TopBottomPanel, Ui,
+    },
+    emath::Align2,
+    epaint::{text::LayoutJob, Color32, Pos2, Rect, Rounding, Shape, Stroke, Vec2},
+    epi::{self, App, Storage, APP_KEY},
 };
 use ritelinked::LinkedHashSet;
+use symphonia::core::{io::MediaSourceStream, probe::Hint};
 
 #[derive(Debug, Default)]
 pub struct Application {
     recently_opened_files: LinkedHashSet<PathBuf>,
+    dropped_files: Vec<DroppedFile>,
 }
 
 impl Application {
     fn open_file(&mut self, path: PathBuf) {
+        // Verify file
+        // path.extension()
+        let file = File::open(&path).expect("Failed to open file");
+
+        let stream = MediaSourceStream::new(Box::new(file), Default::default());
+
+        let mut hint = Hint::new();
+        
+        todo!();
+
         self.recently_opened_files.insert(path);
+    }
+
+    // TODO: make sexier
+    fn detect_files_being_dropped(&mut self, ui: &mut Ui) {
+        use eframe::egui::*;
+
+        // Preview hovering files:
+        if !ui.input().raw.hovered_files.is_empty() {
+            let mut text = "Dropping files:\n".to_owned();
+            for file in &ui.input().raw.hovered_files {
+                if let Some(path) = &file.path {
+                    text += &format!("\n{}", path.display());
+                } else if !file.mime.is_empty() {
+                    text += &format!("\n{}", file.mime);
+                } else {
+                    text += "\n???";
+                }
+            }
+
+            let painter = Painter::new(
+                ui.ctx().clone(),
+                LayerId::new(Order::Foreground, Id::new("file_drop_target")),
+                ui.clip_rect(),
+            );
+
+            let screen_rect = ui.clip_rect();
+            painter.rect_filled(screen_rect, 0.0, Color32::from_black_alpha(192));
+            painter.text(
+                screen_rect.center(),
+                Align2::CENTER_CENTER,
+                text,
+                TextStyle::Heading.resolve(ui.style()),
+                Color32::WHITE,
+            );
+        }
+
+        // Collect dropped files:
+        if !ui.input().raw.dropped_files.is_empty() {
+            self.dropped_files = ui.input().raw.dropped_files.clone();
+        }
     }
 }
 
 impl App for Application {
-    fn update(&mut self, ctx: &Context, _frame: &Frame) {
+    fn persist_native_window(&self) -> bool {
+        false
+    }
+
+    fn update(&mut self, ctx: &Context, _frame: &epi::Frame) {
         TopBottomPanel::top("nav_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 eframe::egui::widgets::global_dark_light_mode_switch(ui);
@@ -93,14 +153,82 @@ impl App for Application {
             });
         });
 
-        CentralPanel::default().show(ctx, |_ui| {});
+        CentralPanel::default().show(ctx, |ui| {
+            self.detect_files_being_dropped(ui);
+
+            Frame::dark_canvas(ui.style()).show(ui, |ui| {
+                let total_available_height = ui.available_height();
+
+                ScrollArea::vertical().show(ui, |ui| {
+                    let mut canvas = ui.available_rect_before_wrap();
+                    canvas.max.y = f32::INFINITY;
+
+                    let response = ui.interact(canvas, ui.id(), Sense::click_and_drag());
+
+                    let key_size = 15.0;
+                    const KEY_COUNT: usize = 88;
+
+                    let left_margin = 20.0;
+
+                    let offset = canvas.min.to_vec2();
+                    let margin = Vec2::new(left_margin, 0.0);
+
+                    let mut items = vec![];
+                    items.extend((0..KEY_COUNT).flat_map(|key| {
+                        let y = key as f32 * key_size;
+
+                        let min = Pos2::new(0.0, y) + offset;
+
+                        [
+                            Shape::line_segment(
+                                [min + margin, Pos2::new(canvas.width(), y) + offset],
+                                Stroke::new(1.0, Color32::WHITE),
+                            ),
+                            Shape::text(
+                                &ui.fonts(),
+                                min + Vec2::new(0.0, key_size / 2.0),
+                                Align2::LEFT_CENTER,
+                                format!("{key:2}"),
+                                TextStyle::Monospace.resolve(ui.style()),
+                                Color32::WHITE,
+                            ),
+                        ]
+                    }));
+                    {
+                        let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(30.0, key_size))
+                            .translate(offset + margin);
+
+                        let hovered = response.hover_pos().map_or(false, |pos| rect.contains(pos));
+
+                        items.push(Shape::rect_filled(
+                            rect,
+                            Rounding::same(2.0),
+                            if hovered {
+                                Color32::LIGHT_RED
+                            } else {
+                                Color32::RED
+                            },
+                        ));
+                    }
+
+                    ui.painter().extend(items);
+
+                    let height = key_size * KEY_COUNT as f32;
+
+                    let mut used_rect = canvas;
+                    used_rect.max.y = used_rect.min.y + height.max(total_available_height);
+
+                    ui.allocate_rect(used_rect, Sense::click_and_drag())
+                });
+            });
+        });
     }
 
     fn name(&self) -> &str {
         "Pitch"
     }
 
-    fn setup(&mut self, _ctx: &Context, _frame: &Frame, storage: Option<&dyn Storage>) {
+    fn setup(&mut self, _ctx: &Context, _frame: &epi::Frame, storage: Option<&dyn Storage>) {
         if let Some(storage) = storage {
             self.recently_opened_files = epi::get_value(storage, APP_KEY).unwrap_or_default();
         }

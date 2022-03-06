@@ -11,6 +11,7 @@ eframe = { version = "0.17.0", features = ["persistence"] }
 rfd = "0.8.0"
 
 ritelinked = { version = "0.3.2", features = ["serde"] }
+symphonia = "0.5.0"
 
 audio = { path = "../../crates/audio", features = ["io"] }
 spectrum = { path = "../../crates/spectrum" }

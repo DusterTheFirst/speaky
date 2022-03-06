@@ -1,10 +1,12 @@
 use color_eyre::eyre::Context;
+use eframe::NativeOptions;
 use tracing::info;
 use util::install_tracing;
 
 use crate::app::Application;
 
 mod app;
+mod key;
 
 pub fn main() -> color_eyre::Result<()> {
     color_eyre::install().wrap_err("failed to install color_eyre")?;
@@ -13,5 +15,11 @@ pub fn main() -> color_eyre::Result<()> {
 
     info!("Starting Application");
 
-    eframe::run_native(Box::new(Application::default()), Default::default())
+    eframe::run_native(
+        Box::new(Application::default()),
+        NativeOptions {
+            drag_and_drop_support: true,
+            ..Default::default()
+        },
+    )
 }
