@@ -39,27 +39,7 @@ impl MusicalNote {
 
     /// Get the amount of semitones this note is off from its octave
     pub fn semitone_offset(&self) -> i8 {
-        use self::{Accidental::*, NoteLetter::*};
-
-        // See the table on https://en.wikipedia.org/wiki/Piano_key_frequencies
-        #[rustfmt::skip]
-        let semitone_offset = match (self.letter, self.accidental) {
-            (C, Some(Flat))   /*| (B, None)*/       => -1,
-            (C, None)           | (B, Some(Sharp))  =>  0,
-            (C, Some(Sharp))    | (D, Some(Flat))   =>  1,
-                                  (D, None)         =>  2,
-            (E, Some(Flat))     | (D, Some(Sharp))  =>  3,
-            (E, None)           | (F, Some(Flat))   =>  4,
-            (E, Some(Sharp))    | (F, None)         =>  5,
-            (G, Some(Flat))     | (F, Some(Sharp))  =>  6,
-            (G, None)                               =>  7,
-            (G, Some(Sharp))    | (A, Some(Flat))   =>  8,
-                                  (A, None)         =>  9,
-            (B, Some(Flat))     | (A, Some(Sharp))  => 10,
-            (B, None)         /*| (C, Some(Flat))*/ => 11,
-        };
-
-        semitone_offset
+        self.letter.semitone() as i8 + self.accidental.map_or(0, |a| a.semitone_delta())
     }
 
     pub fn as_key(&self) -> Option<PianoKey> {
@@ -82,6 +62,16 @@ pub enum Accidental {
     Flat,
 }
 
+impl Accidental {
+    /// The semitone change represented by this accidental
+    pub fn semitone_delta(&self) -> i8 {
+        match self {
+            Accidental::Sharp => 1,
+            Accidental::Flat => -1,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum NoteLetter {
     A,
@@ -91,6 +81,23 @@ pub enum NoteLetter {
     E,
     F,
     G,
+}
+
+impl NoteLetter {
+    /// The semitone in the octave that this note represents
+    pub fn semitone(&self) -> u8 {
+        // See the table on https://en.wikipedia.org/wiki/Piano_key_frequencies
+
+        match self {
+            NoteLetter::C => 0,
+            NoteLetter::D => 2,
+            NoteLetter::E => 4,
+            NoteLetter::F => 5,
+            NoteLetter::G => 7,
+            NoteLetter::A => 9,
+            NoteLetter::B => 11,
+        }
+    }
 }
 
 // An integer piano key in the range 1 - 88
