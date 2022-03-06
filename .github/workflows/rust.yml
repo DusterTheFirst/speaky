@@ -12,6 +12,9 @@ jobs:
             - name: Install cpal Dependencies
               run: sudo apt install libasound2-dev
 
+            - name: Install rfd Dependencies
+              run: sudo apt install libgtk-3-dev
+
             - name: Stable Rust with clippy
               uses: actions-rs/toolchain@v1
               with:
