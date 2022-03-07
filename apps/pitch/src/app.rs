@@ -1,18 +1,17 @@
-use std::{fs::File, path::PathBuf};
+use std::{collections::HashSet, fs::File, path::PathBuf};
 
 use eframe::{
-    egui::{
-        Button, CentralPanel, Context, DroppedFile, Frame, Id, ScrollArea, Sense, TextFormat,
-        TextStyle, TopBottomPanel, Ui,
-    },
-    emath::Align2,
-    epaint::{text::LayoutJob, Color32, FontId, Pos2, Rect, Rounding, Shape, Stroke, Vec2},
+    egui::{Button, CentralPanel, Context, DroppedFile, TextFormat, TopBottomPanel, Ui},
+    epaint::{text::LayoutJob, Color32},
     epi::{self, App, Storage, APP_KEY},
 };
 use ritelinked::LinkedHashSet;
 use symphonia::core::{io::MediaSourceStream, probe::Hint};
 
-use crate::key::{Accidental, PianoKey};
+use crate::{
+    key::PianoKey,
+    piano_roll::{KeyDuration, PianoRoll},
+};
 
 #[derive(Debug, Default)]
 pub struct Application {
@@ -154,105 +153,20 @@ impl App for Application {
         CentralPanel::default().show(ctx, |ui| {
             self.detect_files_being_dropped(ui);
 
-            Frame::dark_canvas(ui.style()).show(ui, |ui| {
-                let total_available_height = ui.available_height();
-
-                ScrollArea::vertical().show(ui, |ui| {
-                    let mut canvas = ui.available_rect_before_wrap();
-                    canvas.max.y = f32::INFINITY;
-
-                    let key_height = 15.0;
-                    const KEY_COUNT: usize = 88;
-
-                    let left_margin = 20.0;
-
-                    let offset = canvas.min.to_vec2();
-                    let margin = Vec2::new(left_margin, 0.0);
-
-                    let mut items = vec![];
-                    items.extend((0..KEY_COUNT).flat_map(|key| {
-                        let y = key as f32 * key_height;
-
-                        let min = Pos2::new(0.0, y) + offset;
-
-                        [
-                            Shape::line_segment(
-                                [min + margin, Pos2::new(canvas.width(), y) + offset],
-                                Stroke::new(1.0, Color32::WHITE),
-                            ),
-                            Shape::text(
-                                &ui.fonts(),
-                                min + Vec2::new(0.0, key_height / 2.0),
-                                Align2::LEFT_CENTER,
-                                format!("{key:2}"),
-                                TextStyle::Monospace.resolve(ui.style()),
-                                Color32::WHITE,
-                            ),
-                        ]
-                    }));
-                    items.extend((1..=88).map(|key_u8| {
-                        let key = PianoKey::new(key_u8).unwrap();
-
-                        let rect = Rect::from_min_size(
-                            Pos2::new(15.0 * key_u8 as f32, key_height * key_u8 as f32),
-                            Vec2::new(30.0, key_height),
+            ui.add(PianoRoll::new(
+                PianoKey::all()
+                    .map(|key| {
+                        (
+                            key,
+                            HashSet::from([KeyDuration {
+                                start: 15 * key.key_u8() as u64,
+                                duration: 30,
+                            }]),
                         )
-                        .translate(offset + margin);
-
-                        let response = ui
-                            .interact(rect, Id::new(key), Sense::click_and_drag())
-                            .on_hover_ui_at_pointer(|ui| {
-                                let note = key.as_note(Accidental::Sharp);
-
-                                ui.label({
-                                    let mut job = LayoutJob::default();
-
-                                    job.append(
-                                        &note.letter().to_string(),
-                                        0.0,
-                                        TextFormat::simple(FontId::monospace(20.0), Color32::GRAY),
-                                    );
-                                    if let Some(accidental) = note.accidental() {
-                                        job.append(
-                                            &accidental.to_string(),
-                                            0.0,
-                                            TextFormat::simple(
-                                                FontId::monospace(20.0),
-                                                Color32::GRAY,
-                                            ),
-                                        );
-                                    }
-                                    job.append(
-                                        &note.octave().to_string(),
-                                        0.0,
-                                        TextFormat::simple(FontId::monospace(10.0), Color32::GRAY),
-                                    );
-
-                                    job
-                                });
-                            });
-
-                        Shape::rect_filled(
-                            rect,
-                            Rounding::same(2.0),
-                            if response.hovered() {
-                                Color32::LIGHT_RED
-                            } else {
-                                Color32::RED
-                            },
-                        )
-                    }));
-
-                    ui.painter().extend(items);
-
-                    let height = key_height * KEY_COUNT as f32;
-
-                    let mut used_rect = canvas;
-                    used_rect.max.y = used_rect.min.y + height.max(total_available_height);
-
-                    ui.allocate_rect(used_rect, Sense::click_and_drag())
-                });
-            });
+                    })
+                    .collect(),
+                15.0,
+            ));
         });
     }
 

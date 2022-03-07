@@ -147,6 +147,10 @@ impl PianoKey {
     // pub const MAX: Self = unsafe { Self(NonZeroU8::new_unchecked(88)) };
     // pub const MIN: Self = unsafe { Self(NonZeroU8::new_unchecked(1)) };
 
+    pub fn all() -> impl ExactSizeIterator<Item = Self> {
+        (1..=88).map(|key| PianoKey::new(key).unwrap())
+    }
+
     pub fn new(key: u8) -> Option<Self> {
         match key {
             0 => None,
@@ -157,6 +161,10 @@ impl PianoKey {
 
     pub fn key(&self) -> NonZeroU8 {
         self.0
+    }
+
+    pub fn key_u8(&self) -> u8 {
+        self.0.get()
     }
 
     // TODO: Scales?

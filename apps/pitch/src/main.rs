@@ -7,6 +7,7 @@ use crate::app::Application;
 
 mod app;
 mod key;
+mod piano_roll;
 
 pub fn main() -> color_eyre::Result<()> {
     color_eyre::install().wrap_err("failed to install color_eyre")?;
