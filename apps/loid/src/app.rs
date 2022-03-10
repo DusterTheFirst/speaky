@@ -190,6 +190,10 @@ impl App for Application {
         false
     }
 
+    fn persist_egui_memory(&self) -> bool {
+        false
+    }
+
     fn update(&mut self, ctx: &Context, frame: &Frame) {
         TopBottomPanel::top("nav_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {

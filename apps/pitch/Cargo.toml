@@ -7,11 +7,22 @@ edition = "2021"
 color-eyre = "0.6.0"
 tracing = "0.1.31"
 
+# UI
 eframe = { version = "0.17.0", features = ["persistence"] }
+
+# File open dialog
 rfd = "0.8.0"
 
+# Recent files queue
 ritelinked = { version = "0.3.2", features = ["serde"] }
+
+# Audio decoding
 symphonia = "0.5.0"
+
+# Midi playback
+midir = "0.7.0"
+tokio = { version = "1.17.0", features = ["rt", "time"] }
+flume = "0.10.11"
 
 audio = { path = "../../crates/audio", features = ["io"] }
 spectrum = { path = "../../crates/spectrum" }

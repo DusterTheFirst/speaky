@@ -1,7 +1,7 @@
-use std::{collections::HashSet, fs::File, path::PathBuf};
+use std::{collections::BTreeSet, fs::File, path::PathBuf, time::Duration};
 
 use eframe::{
-    egui::{Button, CentralPanel, Context, DroppedFile, TextFormat, TopBottomPanel, Ui},
+    egui::{Button, CentralPanel, Context, DroppedFile, Slider, TextFormat, TopBottomPanel, Ui},
     epaint::{text::LayoutJob, Color32},
     epi::{self, App, Storage, APP_KEY},
 };
@@ -10,16 +10,35 @@ use symphonia::core::{io::MediaSourceStream, probe::Hint};
 
 use crate::{
     key::PianoKey,
+    midi::MidiPlayer,
     piano_roll::{KeyDuration, PianoRoll},
 };
 
-#[derive(Debug, Default)]
 pub struct Application {
     recently_opened_files: LinkedHashSet<PathBuf>,
     dropped_files: Vec<DroppedFile>,
+
+    seconds_per_width: f32,
+    key_height: f32,
+
+    midi: MidiPlayer,
 }
 
 impl Application {
+    pub const NAME: &'static str = "Pitch";
+
+    pub fn new() -> Self {
+        Self {
+            recently_opened_files: LinkedHashSet::new(),
+            dropped_files: Vec::new(),
+
+            midi: MidiPlayer::new(Application::NAME),
+
+            seconds_per_width: 2.0,
+            key_height: 15.0,
+        }
+    }
+
     fn open_file(&mut self, path: PathBuf) {
         // Verify file
         // path.extension()
@@ -151,22 +170,27 @@ impl App for Application {
         });
 
         CentralPanel::default().show(ctx, |ui| {
-            self.detect_files_being_dropped(ui);
+            ui.add(Slider::new(&mut self.seconds_per_width, 1.0..=100.0));
+            ui.add(Slider::new(&mut self.key_height, 1.0..=100.0).vertical());
 
             ui.add(PianoRoll::new(
+                &self.midi,
+                self.key_height,
+                self.seconds_per_width,
                 PianoKey::all()
                     .map(|key| {
                         (
                             key,
-                            HashSet::from([KeyDuration {
-                                start: 15 * key.key_u8() as u64,
-                                duration: 30,
-                            }]),
+                            BTreeSet::from([KeyDuration::new(
+                                1500 * key.key_u8() as u64,
+                                Duration::from_millis(1500),
+                            )]),
                         )
                     })
                     .collect(),
-                15.0,
             ));
+
+            self.detect_files_being_dropped(ui);
         });
     }
 
@@ -181,10 +205,14 @@ impl App for Application {
     }
 
     fn name(&self) -> &str {
-        "Pitch"
+        Self::NAME
     }
 
     fn persist_native_window(&self) -> bool {
+        false
+    }
+
+    fn persist_egui_memory(&self) -> bool {
         false
     }
 }
