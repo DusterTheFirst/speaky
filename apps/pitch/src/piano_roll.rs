@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     time::Duration,
 };
 
@@ -15,7 +15,8 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
-pub struct KeyDuration { // TODO: better name
+pub struct KeyDuration {
+    // TODO: better name
     // Start in us
     start: u64,
     // Duration in us
@@ -29,6 +30,10 @@ impl KeyDuration {
 
     pub fn start_secs(&self) -> f32 {
         self.start as f32 / 1000.0
+    }
+
+    pub fn start_micros(&self) -> u64 {
+        self.start
     }
 
     pub fn duration_secs(&self) -> f32 {
@@ -53,7 +58,7 @@ pub struct PianoRoll<'player> {
 
     midi: &'player MidiPlayer,
 
-    keys: HashMap<PianoKey, BTreeSet<KeyDuration>>,
+    keys: BTreeMap<PianoKey, BTreeSet<KeyDuration>>,
 }
 
 impl<'player> PianoRoll<'player> {
@@ -63,7 +68,7 @@ impl<'player> PianoRoll<'player> {
         preference: Accidental,
         key_height: f32,
         seconds_per_width: f32,
-        keys: HashMap<PianoKey, BTreeSet<KeyDuration>>,
+        keys: BTreeMap<PianoKey, BTreeSet<KeyDuration>>,
     ) -> Self {
         Self {
             key_height,

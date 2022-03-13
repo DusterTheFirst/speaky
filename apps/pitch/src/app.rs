@@ -26,6 +26,7 @@ pub struct Application {
     preference: Accidental,
 
     note_duration_s: f32,
+    note_spacing_s: f32,
 
     midi: MidiPlayer,
 }
@@ -45,6 +46,7 @@ impl Application {
             preference: Accidental::Flat,
 
             note_duration_s: 1.5,
+            note_spacing_s: 1.5,
         }
     }
 
@@ -185,10 +187,32 @@ impl App for Application {
                         .suffix("s")
                         .text("Note Duration"),
                 );
+                ui.add(
+                    Slider::new(&mut self.note_spacing_s, 0.0..=10.0)
+                        .suffix("s")
+                        .text("Note Spacing"),
+                );
 
                 ui.selectable_value(&mut self.preference, Accidental::Flat, "b");
                 ui.selectable_value(&mut self.preference, Accidental::Sharp, "#");
             });
+
+            let notes = PianoKey::all()
+                .map(|key| {
+                    (
+                        key,
+                        BTreeSet::from([KeyDuration::new(
+                            (self.note_spacing_s * 1000.0) as u64 * key.key_u8() as u64,
+                            Duration::from_secs_f32(self.note_duration_s),
+                        )]),
+                    )
+                })
+                .collect();
+
+            // TODO: prevent clicks while playing
+            if ui.button("Play Notes").clicked() {
+                self.midi.play_song(&notes);
+            }
 
             ui.separator();
 
@@ -209,17 +233,7 @@ impl App for Application {
                         self.preference,
                         self.key_height,
                         self.seconds_per_width,
-                        PianoKey::all()
-                            .map(|key| {
-                                (
-                                    key,
-                                    BTreeSet::from([KeyDuration::new(
-                                        1500 * key.key_u8() as u64,
-                                        Duration::from_secs_f32(self.note_duration_s),
-                                    )]),
-                                )
-                            })
-                            .collect(),
+                        notes,
                     ));
                 });
 

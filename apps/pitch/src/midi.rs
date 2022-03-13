@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     thread,
     time::{Duration, Instant},
 };
@@ -10,7 +10,7 @@ use futures_lite::future;
 use midir::{MidiOutput, MidiOutputConnection};
 use tracing::{debug, info};
 
-use crate::key::PianoKey;
+use crate::{key::PianoKey, piano_roll::KeyDuration};
 
 pub struct MidiPlayer {
     sender: Sender<MidiThreadCommand>,
@@ -58,6 +58,43 @@ impl MidiPlayer {
             ))
             .unwrap();
     }
+
+    pub fn play_song(&self, notes: &BTreeMap<PianoKey, BTreeSet<KeyDuration>>) {
+        use futures_lite::prelude::*;
+
+        let start = Instant::now();
+
+        future::block_on(async move {
+            let mut notes = notes.clone();
+
+            loop {
+                let timers = notes
+                    .iter()
+                    .flat_map(|(key, durations)| {
+                        durations.iter().map(move |duration| {
+                            async move {
+                                Timer::at(start + Duration::from_millis(duration.start_micros()))
+                                    .await;
+
+                                Some((key, duration))
+                            }
+                            .boxed_local()
+                        })
+                    }) // TODO: Maybe there is a better way than chaining or futures
+                    .reduce(|future_1, future_2| future::or(future_1, future_2).boxed_local())
+                    .unwrap_or_else(|| future::ready(None).boxed_local());
+
+                match timers.await {
+                    Some((&key, &duration)) => {
+                        self.play_piano(key, duration.duration());
+
+                        notes.entry(key).or_default().remove(&duration);
+                    }
+                    None => break,
+                }
+            }
+        })
+    }
 }
 
 async fn midi_thread(mut connection: MidiConnection, thread_commands: Receiver<MidiThreadCommand>) {
@@ -84,6 +121,7 @@ async fn midi_thread(mut connection: MidiConnection, thread_commands: Receiver<M
                 }
                 .boxed_local()
             })
+            // TODO: Maybe there is a better way than chaining or futures
             .reduce(|future_1, future_2| future::or(future_1, future_2).boxed_local())
             .unwrap_or_else(|| future::pending().boxed_local());
 
