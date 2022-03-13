@@ -1,6 +1,5 @@
 use color_eyre::eyre::Context;
 use eframe::NativeOptions;
-use midir::{MidiOutput, MidiOutputPort};
 use tracing::info;
 use util::install_tracing;
 

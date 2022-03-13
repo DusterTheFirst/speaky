@@ -1,9 +1,11 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    sync::Arc,
     thread,
     time::{Duration, Instant},
 };
 
+use async_executor::Executor;
 use async_io::Timer;
 use flume::{Receiver, RecvError, Sender};
 use futures_lite::future;
@@ -14,6 +16,7 @@ use crate::{key::PianoKey, piano_roll::KeyDuration};
 
 pub struct MidiPlayer {
     sender: Sender<MidiThreadCommand>,
+    executor: Arc<Executor<'static>>,
 }
 
 pub enum MidiConnection {
@@ -45,9 +48,22 @@ impl MidiPlayer {
 
         let (sender, recv) = flume::unbounded();
 
-        thread::spawn(move || future::block_on(midi_thread(connection, recv)));
+        let executor = Arc::new(Executor::new());
 
-        Self { sender }
+        thread::Builder::new()
+            .name("smol-future-executor".into())
+            .spawn({
+                let executor = executor.clone();
+
+                move || {
+                    future::block_on(executor.run(future::pending::<()>()));
+                }
+            })
+            .unwrap();
+
+        executor.spawn(midi_thread(connection, recv)).detach();
+
+        Self { sender, executor }
     }
 
     pub fn play_piano(&self, key: PianoKey, duration: Duration) {
@@ -63,37 +79,46 @@ impl MidiPlayer {
         use futures_lite::prelude::*;
 
         let start = Instant::now();
+        let sender = self.sender.clone();
+        let mut notes = notes.clone();
 
-        future::block_on(async move {
-            let mut notes = notes.clone();
-
-            loop {
-                let timers = notes
-                    .iter()
-                    .flat_map(|(key, durations)| {
-                        durations.iter().map(move |duration| {
-                            async move {
-                                Timer::at(start + Duration::from_millis(duration.start_micros()))
+        self.executor
+            .spawn(async move {
+                loop {
+                    let timers = notes
+                        .iter()
+                        .flat_map(|(key, durations)| {
+                            durations.iter().map(move |duration| {
+                                async move {
+                                    Timer::at(
+                                        start + Duration::from_millis(duration.start_micros()),
+                                    )
                                     .await;
 
-                                Some((key, duration))
-                            }
-                            .boxed_local()
-                        })
-                    }) // TODO: Maybe there is a better way than chaining or futures
-                    .reduce(|future_1, future_2| future::or(future_1, future_2).boxed_local())
-                    .unwrap_or_else(|| future::ready(None).boxed_local());
+                                    Some((key, duration))
+                                }
+                                .boxed()
+                            })
+                        }) // TODO: Maybe there is a better way than chaining or futures
+                        .reduce(|future_1, future_2| future::or(future_1, future_2).boxed())
+                        .unwrap_or_else(|| future::ready(None).boxed());
 
-                match timers.await {
-                    Some((&key, &duration)) => {
-                        self.play_piano(key, duration.duration());
+                    match timers.await {
+                        Some((&key, &duration)) => {
+                            sender
+                                .send(MidiThreadCommand::PlayNote(
+                                    MidiNote::from_piano_key(key),
+                                    duration.duration(),
+                                ))
+                                .unwrap();
 
-                        notes.entry(key).or_default().remove(&duration);
+                            notes.entry(key).or_default().remove(&duration);
+                        }
+                        None => break,
                     }
-                    None => break,
                 }
-            }
-        })
+            })
+            .detach();
     }
 }
 
@@ -119,11 +144,11 @@ async fn midi_thread(mut connection: MidiConnection, thread_commands: Receiver<M
 
                     MidiAction::TimerWake(note)
                 }
-                .boxed_local()
+                .boxed()
             })
             // TODO: Maybe there is a better way than chaining or futures
-            .reduce(|future_1, future_2| future::or(future_1, future_2).boxed_local())
-            .unwrap_or_else(|| future::pending().boxed_local());
+            .reduce(|future_1, future_2| future::or(future_1, future_2).boxed())
+            .unwrap_or_else(|| future::pending().boxed());
 
         // Create future that will accept incoming commands
         let commands_fut = async {
