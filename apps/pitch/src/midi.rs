@@ -1,9 +1,14 @@
-use std::{thread, time::Duration};
+use std::{
+    collections::BTreeMap,
+    thread,
+    time::{Duration, Instant},
+};
 
-use flume::{Receiver, Sender};
+use async_io::Timer;
+use flume::{Receiver, RecvError, Sender};
+use futures_lite::future;
 use midir::{MidiOutput, MidiOutputConnection};
-use tokio::time::sleep;
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::key::PianoKey;
 
@@ -40,7 +45,7 @@ impl MidiPlayer {
 
         let (sender, recv) = flume::unbounded();
 
-        thread::spawn(move || midi_thread(connection, recv));
+        thread::spawn(move || future::block_on(midi_thread(connection, recv)));
 
         Self { sender }
     }
@@ -55,51 +60,77 @@ impl MidiPlayer {
     }
 }
 
-fn midi_thread(mut connection: MidiConnection, thread_commands: Receiver<MidiThreadCommand>) {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .build()
-        .unwrap();
+async fn midi_thread(mut connection: MidiConnection, thread_commands: Receiver<MidiThreadCommand>) {
+    use futures_lite::prelude::*;
 
-    let (midi_commands_send, midi_commands_recv) = flume::unbounded::<MidiCommand>();
+    #[derive(Debug)]
+    enum MidiAction {
+        ChannelClosed,
+        NewCommand(MidiThreadCommand),
+        TimerWake(MidiNote),
+    }
 
-    thread::spawn(move || {
-        for midi_command in midi_commands_recv.iter() {
-            if let MidiConnection::Connected { connection } = &mut connection {
-                connection.send(&midi_command.to_bytes()).unwrap();
-            } else {
-                debug!(?midi_command, "dropping midi command");
+    let mut note_off = BTreeMap::<MidiNote, Instant>::new();
+
+    loop {
+        // Create future that will poll all timers
+        let notes_off_fut = note_off
+            .iter()
+            .map(|(&note, &deadline)| {
+                async move {
+                    Timer::at(deadline).await;
+
+                    MidiAction::TimerWake(note)
+                }
+                .boxed_local()
+            })
+            .reduce(|future_1, future_2| future::or(future_1, future_2).boxed_local())
+            .unwrap_or_else(|| future::pending().boxed_local());
+
+        // Create future that will accept incoming commands
+        let commands_fut = async {
+            match thread_commands.recv_async().await {
+                Ok(command) => MidiAction::NewCommand(command),
+                Err(RecvError::Disconnected) => MidiAction::ChannelClosed,
             }
-        }
-    });
+        };
 
-    runtime.block_on(async move {
-        while let Ok(command) = thread_commands.recv_async().await {
-            match command {
-                MidiThreadCommand::PlayNote(note, duration) => {
-                    midi_commands_send
-                        .send_async(MidiCommand::NoteOn(note))
-                        .await
-                        .unwrap();
+        // Poll both futures
+        match dbg!(future::or(commands_fut, notes_off_fut).await) {
+            MidiAction::ChannelClosed => return,
+            MidiAction::NewCommand(MidiThreadCommand::PlayNote(note, duration)) => {
+                match &mut connection {
+                    MidiConnection::Disconnected { .. } => {
+                        info!(?note, ?duration, "Midi disconnected.. ignoring note");
+                    }
+                    MidiConnection::Connected { connection } => {
+                        connection
+                            .send(MidiCommand::NoteOn(note).to_bytes().as_slice())
+                            .unwrap();
 
-                    tokio::spawn({
-                        let midi_commands_send = midi_commands_send.clone();
+                        let deadline = Instant::now() + duration;
 
-                        // FIXME: noteoff can end later notes early
-                        // also like this is a mess :(
-                        // Do i even need to use futures?
-                        async move {
-                            sleep(duration).await;
-                            midi_commands_send
-                                .send_async(MidiCommand::NoteOff(note))
-                                .await
-                                .unwrap();
-                        }
-                    });
+                        // Queue command
+                        let pre_instant = note_off.entry(note).or_insert(deadline);
+
+                        *pre_instant = deadline.max(*pre_instant);
+                    }
                 }
             }
+            MidiAction::TimerWake(note) => match &mut connection {
+                MidiConnection::Disconnected { .. } => {
+                    info!(?note, "Midi disconnected.. ignoring note off");
+                }
+                MidiConnection::Connected { connection } => {
+                    note_off.remove(&note);
+
+                    connection
+                        .send(MidiCommand::NoteOff(note).to_bytes().as_slice())
+                        .unwrap();
+                }
+            },
         }
-    });
+    }
 }
 
 #[derive(Debug)]
@@ -107,7 +138,7 @@ pub enum MidiThreadCommand {
     PlayNote(MidiNote, Duration),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MidiCommand {
     NoteOn(MidiNote),
     NoteOff(MidiNote),

@@ -11,7 +11,7 @@ use ritelinked::LinkedHashSet;
 use symphonia::core::{io::MediaSourceStream, probe::Hint};
 
 use crate::{
-    key::PianoKey,
+    key::{Accidental, PianoKey},
     midi::MidiPlayer,
     piano_roll::{KeyDuration, PianoRoll},
 };
@@ -20,8 +20,12 @@ pub struct Application {
     recently_opened_files: LinkedHashSet<PathBuf>,
     dropped_files: Vec<DroppedFile>,
 
+    // FIXME: fix this abomination
     seconds_per_width: f32,
     key_height: f32,
+    preference: Accidental,
+
+    note_duration_s: f32,
 
     midi: MidiPlayer,
 }
@@ -38,6 +42,9 @@ impl Application {
 
             seconds_per_width: 2.0,
             key_height: 15.0,
+            preference: Accidental::Flat,
+
+            note_duration_s: 1.5,
         }
     }
 
@@ -172,16 +179,34 @@ impl App for Application {
         });
 
         CentralPanel::default().show(ctx, |ui| {
-            ui.add(Slider::new(&mut self.seconds_per_width, 1.0..=100.0));
+            ui.horizontal(|ui| {
+                ui.add(
+                    Slider::new(&mut self.note_duration_s, 0.0..=10.0)
+                        .suffix("s")
+                        .text("Note Duration"),
+                );
+
+                ui.selectable_value(&mut self.preference, Accidental::Flat, "b");
+                ui.selectable_value(&mut self.preference, Accidental::Sharp, "#");
+            });
+
+            ui.separator();
+
+            ui.add(Slider::new(&mut self.seconds_per_width, 1.0..=100.0).text("Scale X"));
 
             Grid::new("piano_roll_grid")
                 .num_columns(2)
                 .min_row_height(ui.available_height())
                 .show(ui, |ui| {
-                    ui.add(Slider::new(&mut self.key_height, 1.0..=100.0).vertical());
+                    ui.add(
+                        Slider::new(&mut self.key_height, 1.0..=100.0)
+                            .vertical()
+                            .text("Scale Y"),
+                    );
 
                     ui.add(PianoRoll::new(
                         &self.midi,
+                        self.preference,
                         self.key_height,
                         self.seconds_per_width,
                         PianoKey::all()
@@ -190,7 +215,7 @@ impl App for Application {
                                     key,
                                     BTreeSet::from([KeyDuration::new(
                                         1500 * key.key_u8() as u64,
-                                        Duration::from_millis(1500),
+                                        Duration::from_secs_f32(self.note_duration_s),
                                     )]),
                                 )
                             })

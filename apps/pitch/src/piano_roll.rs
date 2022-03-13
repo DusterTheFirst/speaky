@@ -15,7 +15,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
-pub struct KeyDuration {
+pub struct KeyDuration { // TODO: better name
     // Start in us
     start: u64,
     // Duration in us
@@ -45,6 +45,9 @@ impl KeyDuration {
 }
 
 pub struct PianoRoll<'player> {
+    // TODO: scales?
+    preference: Accidental,
+
     key_height: f32,
     seconds_per_width: f32, // TODO: less jank
 
@@ -57,15 +60,17 @@ impl<'player> PianoRoll<'player> {
     // TODO: builder
     pub fn new(
         midi: &'player MidiPlayer,
+        preference: Accidental,
         key_height: f32,
         seconds_per_width: f32,
         keys: HashMap<PianoKey, BTreeSet<KeyDuration>>,
     ) -> Self {
         Self {
-            midi,
-            keys,
-            seconds_per_width,
             key_height,
+            keys,
+            midi,
+            preference,
+            seconds_per_width,
         }
     }
 }
@@ -99,7 +104,7 @@ impl PianoRoll<'_> {
                     &ui.fonts(),
                     top_left + Vec2::new(left_gutter, self.key_height / 2.0),
                     Align2::RIGHT_CENTER,
-                    format!("{key_u8:2}"),
+                    format!("{:3}", key.as_note(self.preference)),
                     FontId::monospace(self.key_height),
                     Color32::WHITE,
                 ),
@@ -184,7 +189,7 @@ impl Widget for PianoRoll<'_> {
                 ScrollArea::both().show(ui, |ui| {
                     let drawing_window = ui.available_rect_before_wrap();
 
-                    let left_gutter = 20.0;
+                    let left_gutter = 30.0;
 
                     ui.painter().extend({
                         let mut shapes = Vec::new();

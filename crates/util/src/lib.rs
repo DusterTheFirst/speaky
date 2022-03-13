@@ -12,7 +12,7 @@ pub fn install_tracing() -> color_eyre::Result<()> {
     let fmt_layer = tracing_wasm::WASMLayer::default();
 
     #[cfg(not(target_arch = "wasm32"))]
-    let fmt_layer = tracing_subscriber::fmt::layer().pretty();
+    let fmt_layer = tracing_subscriber::fmt::layer().compact();
 
     let filter_layer = EnvFilter::try_from_default_env()
         .or_else(|_| EnvFilter::try_new("info"))
