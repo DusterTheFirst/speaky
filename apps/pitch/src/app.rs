@@ -1,7 +1,9 @@
 use std::{collections::BTreeSet, fs::File, path::PathBuf, time::Duration};
 
 use eframe::{
-    egui::{Button, CentralPanel, Context, DroppedFile, Slider, TextFormat, TopBottomPanel, Ui},
+    egui::{
+        Button, CentralPanel, Context, DroppedFile, Grid, Slider, TextFormat, TopBottomPanel, Ui,
+    },
     epaint::{text::LayoutJob, Color32},
     epi::{self, App, Storage, APP_KEY},
 };
@@ -171,24 +173,30 @@ impl App for Application {
 
         CentralPanel::default().show(ctx, |ui| {
             ui.add(Slider::new(&mut self.seconds_per_width, 1.0..=100.0));
-            ui.add(Slider::new(&mut self.key_height, 1.0..=100.0).vertical());
 
-            ui.add(PianoRoll::new(
-                &self.midi,
-                self.key_height,
-                self.seconds_per_width,
-                PianoKey::all()
-                    .map(|key| {
-                        (
-                            key,
-                            BTreeSet::from([KeyDuration::new(
-                                1500 * key.key_u8() as u64,
-                                Duration::from_millis(1500),
-                            )]),
-                        )
-                    })
-                    .collect(),
-            ));
+            Grid::new("piano_roll_grid")
+                .num_columns(2)
+                .min_row_height(ui.available_height())
+                .show(ui, |ui| {
+                    ui.add(Slider::new(&mut self.key_height, 1.0..=100.0).vertical());
+
+                    ui.add(PianoRoll::new(
+                        &self.midi,
+                        self.key_height,
+                        self.seconds_per_width,
+                        PianoKey::all()
+                            .map(|key| {
+                                (
+                                    key,
+                                    BTreeSet::from([KeyDuration::new(
+                                        1500 * key.key_u8() as u64,
+                                        Duration::from_millis(1500),
+                                    )]),
+                                )
+                            })
+                            .collect(),
+                    ));
+                });
 
             self.detect_files_being_dropped(ui);
         });
