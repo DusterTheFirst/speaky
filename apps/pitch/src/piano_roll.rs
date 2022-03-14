@@ -14,7 +14,7 @@ use crate::{
     midi::MidiPlayer,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct KeyDuration {
     // TODO: better name
     // Start in us
@@ -81,37 +81,44 @@ impl<'player> PianoRoll<'player> {
 }
 
 impl PianoRoll<'_> {
-    fn draw_ui<'s>(
+    fn draw_key_ui<'s>(
         &'s self,
         ui: &'s Ui,
         drawing_window: Rect,
-        left_gutter: f32,
+        margin: Vec2,
+        size: Vec2,
     ) -> impl Iterator<Item = Shape> + 's {
         PianoKey::all().flat_map(move |key| {
-            let key_u8 = key.key_u8();
+            let y = (key.key_u8() - 1) as f32 * self.key_height;
 
-            let y = (key_u8 - 1) as f32 * self.key_height;
+            let top_left = Pos2::new(0.0, y) + drawing_window.min.to_vec2() + margin;
 
-            let top_left = Pos2::new(0.0, y) + drawing_window.min.to_vec2();
-
-            // TODO: hover and click on number
+            let rect = Rect::from_min_size(top_left, Vec2::new(size.x, self.key_height));
 
             [
-                Shape::line_segment(
-                    [
-                        top_left + (Vec2::X * left_gutter),
-                        Pos2::new(drawing_window.width(), y) + drawing_window.min.to_vec2(),
-                    ],
-                    Stroke::new(1.0, Color32::WHITE),
+                Shape::rect_filled(
+                    rect,
+                    Rounding::none(),
+                    if key.is_white() {
+                        Color32::WHITE.linear_multiply(0.5)
+                    } else {
+                        Color32::WHITE.linear_multiply(0.05)
+                    },
                 ),
+                // Shape::rect_stroke(rect, Rounding::none(), Stroke::new(1.0, Color32::WHITE)),
                 // TODO: Measure text and set margin accordingly
+                // TODO: hover and click on number
                 Shape::text(
                     &ui.fonts(),
-                    top_left + Vec2::new(left_gutter, self.key_height / 2.0),
+                    top_left + Vec2::new(0.0, self.key_height / 2.0),
                     Align2::RIGHT_CENTER,
                     format!("{:3}", key.as_note(self.preference)),
                     FontId::monospace(self.key_height),
-                    Color32::WHITE,
+                    if key.is_white() {
+                        Color32::WHITE
+                    } else {
+                        Color32::DARK_GRAY
+                    },
                 ),
             ]
         })
@@ -121,15 +128,14 @@ impl PianoRoll<'_> {
         &'s self,
         ui: &'s Ui,
         drawing_window: Rect,
-        left_gutter: f32,
+        margin: Vec2,
     ) -> impl Iterator<Item = Shape> + 's {
         self.keys.iter().flat_map(move |(&key, durations)| {
             let key_u8 = key.key_u8();
 
             let y = (key_u8 - 1) as f32 * self.key_height;
 
-            durations.iter().map(move |duration| {
-                // TODO: time scaling
+            durations.iter().flat_map(move |duration| {
                 let rect = Rect::from_min_size(
                     Pos2::new(duration.start_secs() * self.seconds_per_width, y),
                     Vec2::new(
@@ -137,10 +143,10 @@ impl PianoRoll<'_> {
                         self.key_height,
                     ),
                 )
-                .translate(drawing_window.min.to_vec2() + Vec2::X * left_gutter);
+                .translate(drawing_window.min.to_vec2() + margin);
 
                 let response = ui
-                    .interact(rect, Id::new(key), Sense::click_and_drag())
+                    .interact(rect, Id::new((key, duration)), Sense::click_and_drag())
                     .on_hover_ui_at_pointer(|ui| {
                         let note = key.as_note(Accidental::Sharp);
 
@@ -173,16 +179,48 @@ impl PianoRoll<'_> {
                     self.midi.play_piano(key, duration.duration())
                 }
 
-                Shape::rect_filled(
-                    rect,
-                    Rounding::same(2.0),
-                    if response.hovered() {
-                        Color32::LIGHT_RED
-                    } else {
-                        Color32::RED
-                    },
-                )
+                [
+                    Shape::rect_filled(
+                        rect,
+                        Rounding::same(2.0),
+                        if response.hovered() {
+                            Color32::LIGHT_RED
+                        } else {
+                            Color32::RED
+                        },
+                    ),
+                    Shape::rect_stroke(rect, Rounding::same(2.0), Stroke::new(2.0, Color32::KHAKI)),
+                ]
             })
+        })
+    }
+
+    fn draw_time_ui<'s>(
+        &'s self,
+        ui: &'s Ui,
+        drawing_window: Rect,
+        margin: Vec2,
+        size: Vec2,
+    ) -> impl Iterator<Item = Shape> + 's {
+        (0..((size.x / self.seconds_per_width).floor() as u64)).flat_map(move |second| {
+            let x = second as f32 * self.seconds_per_width;
+
+            let offset = margin + drawing_window.min.to_vec2();
+
+            [
+                Shape::text(
+                    &ui.fonts(),
+                    Pos2::new(x, 0.0) + offset,
+                    Align2::CENTER_BOTTOM,
+                    format!("{second}s"),
+                    FontId::monospace(margin.y),
+                    Color32::WHITE,
+                ),
+                Shape::line_segment(
+                    [Pos2::new(x, 0.0) + offset, Pos2::new(x, size.y) + offset],
+                    Stroke::new(2.0, Color32::BLACK),
+                ),
+            ]
         })
     }
 }
@@ -194,37 +232,39 @@ impl Widget for PianoRoll<'_> {
                 ScrollArea::both().show(ui, |ui| {
                     let drawing_window = ui.available_rect_before_wrap();
 
-                    let left_gutter = 30.0;
+                    let margin = Vec2::new(30.0, 15.0);
+
+                    let size = {
+                        let alloc_height = (self.key_height * PianoKey::all().len() as f32)
+                            .max(drawing_window.height());
+
+                        let alloc_width = self
+                            .keys
+                            .values()
+                            .filter_map(|set| {
+                                set.iter()
+                                    .last()
+                                    .map(|duration| duration.end_secs() * self.seconds_per_width)
+                            })
+                            .reduce(f32::max)
+                            .unwrap_or_default()
+                            .max(drawing_window.width());
+
+                        Vec2::new(alloc_width, alloc_height)
+                    };
 
                     ui.painter().extend({
                         let mut shapes = Vec::new();
 
-                        shapes.extend(self.draw_ui(ui, drawing_window, left_gutter));
-                        shapes.extend(self.draw_notes(ui, drawing_window, left_gutter));
+                        shapes.extend(self.draw_key_ui(ui, drawing_window, margin, size));
+                        shapes.extend(self.draw_time_ui(ui, drawing_window, margin, size));
+                        shapes.extend(self.draw_notes(ui, drawing_window, margin));
 
                         shapes
                     });
 
-                    let height = self.key_height * PianoKey::all().len() as f32;
-
                     ui.allocate_rect(
-                        Rect::from_min_size(
-                            drawing_window.min,
-                            Vec2::new(
-                                self.keys
-                                    .values()
-                                    .filter_map(|set| {
-                                        set.iter().last().map(|duration| {
-                                            duration.end_secs() * self.seconds_per_width
-                                        })
-                                    })
-                                    .reduce(f32::max)
-                                    .map(|end| end + left_gutter)
-                                    .unwrap_or_default()
-                                    .max(drawing_window.width()),
-                                height.max(drawing_window.height()),
-                            ),
-                        ),
+                        Rect::from_min_size(drawing_window.min, size + margin),
                         Sense::click_and_drag(),
                     )
                 });

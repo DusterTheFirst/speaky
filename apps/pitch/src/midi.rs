@@ -103,6 +103,7 @@ impl MidiPlayer {
                         .reduce(|future_1, future_2| future::or(future_1, future_2).boxed())
                         .unwrap_or_else(|| future::ready(None).boxed());
 
+                    // TODO: merge and send keys together if they have the same deadline
                     match timers.await {
                         Some((&key, &duration)) => {
                             sender
@@ -159,7 +160,7 @@ async fn midi_thread(mut connection: MidiConnection, thread_commands: Receiver<M
         };
 
         // Poll both futures
-        match dbg!(future::or(commands_fut, notes_off_fut).await) {
+        match future::or(commands_fut, notes_off_fut).await {
             MidiAction::ChannelClosed => return,
             MidiAction::NewCommand(MidiThreadCommand::PlayNote(note, duration)) => {
                 match &mut connection {

@@ -41,12 +41,12 @@ impl Application {
 
             midi: MidiPlayer::new(Application::NAME),
 
-            seconds_per_width: 2.0,
+            seconds_per_width: 30.0,
             key_height: 15.0,
             preference: Accidental::Flat,
 
-            note_duration_s: 1.5,
-            note_spacing_s: 1.5,
+            note_duration_s: 0.125,
+            note_spacing_s: 0.125,
         }
     }
 
@@ -109,7 +109,6 @@ impl App for Application {
     fn update(&mut self, ctx: &Context, _frame: &epi::Frame) {
         TopBottomPanel::top("nav_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                eframe::egui::widgets::global_dark_light_mode_switch(ui);
                 ui.menu_button("File", |ui| {
                     if ui.button("Open File…").clicked() {
                         ui.close_menu();
@@ -176,35 +175,57 @@ impl App for Application {
                             }
                         });
                     });
-                })
+                });
+                ui.menu_button("View", |ui| {
+                    ui.menu_button("Accidental Preference", |ui| {
+                        // TODO: add font with the flat+sharp chars
+                        ui.selectable_value(&mut self.preference, Accidental::Flat, "Flats (b)");
+                        ui.selectable_value(&mut self.preference, Accidental::Sharp, "Sharps (#)");
+
+                        ui.separator();
+
+                        // TODO: Scales
+                        ui.add_enabled_ui(false, |ui| ui.menu_button("Scale", |_ui| {}))
+                    });
+
+                    ui.menu_button("Theme", |ui| {
+                        // TODO: custom
+                        eframe::egui::widgets::global_dark_light_mode_buttons(ui);
+                    })
+                });
             });
         });
 
         CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.add(
-                    Slider::new(&mut self.note_duration_s, 0.0..=10.0)
+                    Slider::new(&mut self.note_duration_s, 0.0..=1.0)
                         .suffix("s")
                         .text("Note Duration"),
                 );
                 ui.add(
-                    Slider::new(&mut self.note_spacing_s, 0.0..=10.0)
+                    Slider::new(&mut self.note_spacing_s, 0.0..=1.0)
                         .suffix("s")
                         .text("Note Spacing"),
                 );
-
-                ui.selectable_value(&mut self.preference, Accidental::Flat, "b");
-                ui.selectable_value(&mut self.preference, Accidental::Sharp, "#");
             });
 
             let notes = PianoKey::all()
                 .map(|key| {
+                    let duration = Duration::from_secs_f32(self.note_duration_s);
+                    let spacing = (self.note_spacing_s * 1000.0) as u64;
+                    let key_index = key.key_u8() - 1;
+
                     (
                         key,
-                        BTreeSet::from([KeyDuration::new(
-                            (self.note_spacing_s * 1000.0) as u64 * key.key_u8() as u64,
-                            Duration::from_secs_f32(self.note_duration_s),
-                        )]),
+                        BTreeSet::from([
+                            KeyDuration::new(spacing * key_index as u64, duration),
+                            KeyDuration::new(
+                                spacing
+                                    * (PianoKey::all().last().unwrap().key_u8() - key_index) as u64,
+                                duration,
+                            ),
+                        ]),
                     )
                 })
                 .collect();

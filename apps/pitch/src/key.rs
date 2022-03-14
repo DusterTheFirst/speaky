@@ -170,7 +170,7 @@ impl PianoKey {
     // TODO: Scales?
     pub fn as_note(&self, preference: Accidental) -> MusicalNote {
         // Although the piano starts with A0, the octave starts with C0
-        let key_from_c0 = self.key().get() + 8;
+        let key_from_c0 = self.key_u8() + 8;
 
         // Quantize by the 12 semitones in an octave
         let note_offset = key_from_c0 % 12;
@@ -198,6 +198,24 @@ impl PianoKey {
             (11, _) => MusicalNote::new(B, None, octave),
             (12.., _) => unreachable!(),
         }
+    }
+
+    pub fn is_white(&self) -> bool {
+        // Although the piano starts with A0, the octave starts with C0
+        let key_from_c0 = self.key_u8() + 8;
+
+        // Quantize by the 12 semitones in an octave
+        let note_offset = key_from_c0 % 12;
+
+        match note_offset {
+            0 | 2 | 4 | 5 | 7 | 9 | 11 => true,
+            1 | 3 | 6 | 8 | 10 => false,
+            12.. => unreachable!(),
+        }
+    }
+
+    pub fn is_black(&self) -> bool {
+        !self.is_white()
     }
 }
 
