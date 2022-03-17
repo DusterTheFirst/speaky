@@ -10,7 +10,7 @@ pub struct MusicalNote {
     octave: u8,
 }
 
-// TODO: frequencies
+// TODO: frequencies (tuning?)
 impl Display for MusicalNote {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.letter)?;
@@ -58,17 +58,22 @@ impl MusicalNote {
         self.letter.semitone() as i8 + self.accidental.map_or(0, |a| a.semitone_delta())
     }
 
+    /// Get the twelve tone equal temperament semitone from C0
+    pub fn semitone(&self) -> u8 {
+        ((self.octave * 12) as i8 + self.semitone_offset()) as u8
+    }
+
     pub fn as_key(&self) -> Option<PianoKey> {
         if self.octave > 8 {
             return None;
         }
 
         // TODO: https://github.com/rust-lang/rust/issues/87840
-        // Get note from C0
-        let key_from_c0 = (self.octave * 12) as i8 + self.semitone_offset();
+        // Get semitone from C0
+        let semitone = self.semitone();
 
         // Move it to note from A0 since thats the first key on the piano
-        PianoKey::new((key_from_c0 as u8).saturating_sub(8))
+        PianoKey::new(semitone.saturating_sub(8))
     }
 }
 
@@ -158,6 +163,18 @@ impl PianoKey {
             1..=88 => NonZeroU8::new(key).map(Self),
             _ => None,
         }
+    }
+
+    // TODO: Scales?
+    pub fn from_concert_pitch(freq: f32) -> Option<Self> {
+        Self::new(((12.0 * (freq / 440.0).log2()).round() as i8 + 49) as u8)
+    }
+
+    pub fn concert_pitch(&self) -> f32 {
+        let twelfth_root = 2.0f32.powf(1.0 / 12.0);
+
+        // Raise to the power of keys away from A4
+        twelfth_root.powi(self.key_u8() as i32 - 49)
     }
 
     pub fn key(&self) -> NonZeroU8 {

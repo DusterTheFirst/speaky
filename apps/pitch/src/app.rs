@@ -4,7 +4,7 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering},
-        Arc, RwLock,
+        Arc,
     },
     thread,
     time::Duration,
@@ -14,13 +14,14 @@ use atomic::Atomic;
 use audio::waveform::Waveform;
 use eframe::{
     egui::{
-        Button, CentralPanel, Context, DroppedFile, Grid, ProgressBar, Slider, TextFormat,
-        TopBottomPanel, Ui, Window,
+        style::Margin, Button, CentralPanel, Context, DroppedFile, Grid, ProgressBar, ScrollArea,
+        Slider, TextFormat, TopBottomPanel, Ui, Window,
     },
     emath::Align2,
-    epaint::{text::LayoutJob, Color32, Vec2},
+    epaint::{text::LayoutJob, AlphaImage, Color32, ColorImage, TextureHandle, Vec2},
     epi::{self, App, Frame, Storage, APP_KEY},
 };
+use parking_lot::RwLock;
 use ritelinked::LinkedHashSet;
 use spectrum::WaveformSpectrum;
 use symphonia::core::{
@@ -49,7 +50,8 @@ pub struct Application {
     preference: Accidental,
 
     // TODO: parking lot?
-    notes: RwLock<Option<BTreeMap<PianoKey, BTreeSet<KeyDuration>>>>,
+    notes: Arc<RwLock<Option<BTreeMap<PianoKey, BTreeSet<KeyDuration>>>>>,
+    spectrum: Arc<RwLock<Option<TextureHandle>>>,
     audio_progress: Arc<(Atomic<AudioStep>, Atomic<f32>)>,
 
     midi: MidiPlayer,
@@ -75,12 +77,13 @@ impl Application {
             key_height: 15.0,
             preference: Accidental::Flat,
 
-            notes: RwLock::new(None),
+            notes: Default::default(),
+            spectrum: Default::default(),
             audio_progress: Arc::new((Atomic::new(AudioStep::None), Atomic::new(0.0))),
         }
     }
 
-    fn open_file(&mut self, path: PathBuf, frame: Frame) {
+    fn open_file(&mut self, path: PathBuf, ctx: Context, frame: Frame) {
         // Verify file
         // path.extension()
         let file = File::open(&path).expect("Failed to open file");
@@ -120,6 +123,9 @@ impl Application {
         let track_frames = track.codec_params.n_frames.expect("unknown duration");
 
         let audio_progress = self.audio_progress.clone();
+        let spectrum = self.spectrum.clone();
+
+        let preference = self.preference;
 
         thread::spawn(move || {
             let (step, progress) = audio_progress.as_ref();
@@ -156,7 +162,6 @@ impl Application {
                 };
 
                 progress.store(packet.ts() as f32 / track_frames as f32, Ordering::SeqCst);
-                atomic::fence(Ordering::SeqCst);
                 frame.request_repaint();
 
                 // Consume any new metadata that has been read since the last packet.
@@ -203,6 +208,7 @@ impl Application {
             }
 
             step.store(AudioStep::Analyzing, Ordering::SeqCst);
+            progress.store(0.0, Ordering::SeqCst);
             frame.request_repaint();
 
             if let Some(spec) = spec {
@@ -210,14 +216,38 @@ impl Application {
 
                 assert_eq!(waveform.len() as u64, track_frames);
 
-                const STEP: usize = 100;
+                const STEP: usize = 1000;
+                const FFT_WIDTH: usize = 2048;
 
-                for start in (0..waveform.len()).step_by(STEP) {
-                    let waveform = waveform.slice(start..start + 100);
-                    let spectrum = waveform.spectrum(spectrum::Window::Hann, 2048);
+                let windows = (0..waveform.len() - STEP)
+                    .step_by(STEP)
+                    .map(|start| start..start + 100);
 
-                    dbg!(start..start + 100, spectrum.main_frequency());
+                let mut image = AlphaImage::new([dbg!(windows.len()), FFT_WIDTH]);
+
+                for (i, window) in windows.enumerate() {
+                    progress.store(i as f32 / image.width() as f32, Ordering::SeqCst);
+                    frame.request_repaint();
+
+                    let waveform = waveform.slice(window);
+                    let spectrum = waveform.spectrum(spectrum::Window::Hann, FFT_WIDTH);
+
+                    let width = image.width();
+                    for (pixel, amplitude) in image.pixels[i..]
+                        .iter_mut()
+                        .step_by(width)
+                        .zip(spectrum.amplitudes_real())
+                    {
+                        *pixel = (u8::MAX as f32 * amplitude).round() as u8
+                    }
+
+                    // let key = spectrum
+                    //     .main_frequency()
+                    //     .and_then(|(_bucket, f)| PianoKey::from_concert_pitch(f))
+                    //     .map(|key| dbg!(key.as_note(preference)));
                 }
+
+                *spectrum.write() = Some(ctx.load_texture("fft-spectrum", image));
             }
 
             step.store(AudioStep::None, Ordering::SeqCst);
@@ -266,6 +296,7 @@ impl Application {
                 dropped_file
                     .path
                     .expect("drag and drop not supported on web platform yet"),
+                ui.ctx().clone(),
                 frame.clone(),
             )
         }
@@ -298,7 +329,7 @@ impl App for Application {
                         ui.close_menu();
 
                         if let Some(path) = rfd::FileDialog::new().pick_file() {
-                            self.open_file(path, frame.clone());
+                            self.open_file(path, ctx.clone(), frame.clone());
                         }
                     }
                     ui.add_enabled_ui(!self.recently_opened_files.is_empty(), |ui| {
@@ -349,7 +380,7 @@ impl App for Application {
 
                             // Delay file open until all files have been put on screen.
                             if let Some(selected_file) = selected_file {
-                                self.open_file(selected_file, frame.clone());
+                                self.open_file(selected_file, ctx.clone(), frame.clone());
                             }
 
                             ui.separator();
@@ -380,9 +411,22 @@ impl App for Application {
             });
         });
 
+        if let Some(spectrum) = self.spectrum.read().as_ref() {
+            TopBottomPanel::bottom("spectrum").show(ctx, |ui| {
+                eframe::egui::Frame::dark_canvas(ui.style())
+                    .show(ui, |ui| {
+                        ScrollArea::horizontal().show(ui, |ui| {
+                            let scale = 100.0 / spectrum.size_vec2().y;
+
+                            ui.image(spectrum, spectrum.size_vec2() * scale)
+                        });
+                    });
+            });
+        }
+
         CentralPanel::default().show(ctx, |ui| {
             {
-                let notes = self.notes.read().unwrap();
+                let notes = self.notes.read();
 
                 ui.set_enabled(notes.is_some());
 
