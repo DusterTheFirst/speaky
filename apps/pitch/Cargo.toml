@@ -13,11 +13,25 @@ eframe = { version = "0.17.0", features = ["persistence"] }
 # File open dialog
 rfd = "0.8.0"
 
+# Mutable UI state between threads
+atomic = { version = "0.5.1", features = ["std"] }
+
 # Recent files queue
 ritelinked = { version = "0.3.2", features = ["serde"] }
 
 # Audio decoding
-symphonia = "0.5.0"
+symphonia = { version = "0.5.0", features = [
+    "flac",
+    "pcm",
+    "vorbis",
+    "alac",
+    "aac",
+    "mp3",
+    "isomp4",
+    "mkv",
+    "ogg",
+    "wav",
+] }
 
 # Midi playback
 midir = "0.7.0"

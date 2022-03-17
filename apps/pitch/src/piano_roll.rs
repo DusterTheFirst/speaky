@@ -49,7 +49,7 @@ impl KeyDuration {
     }
 }
 
-pub struct PianoRoll<'player> {
+pub struct PianoRoll<'player, 'keys> {
     // TODO: scales?
     preference: Accidental,
 
@@ -58,17 +58,17 @@ pub struct PianoRoll<'player> {
 
     midi: &'player MidiPlayer,
 
-    keys: BTreeMap<PianoKey, BTreeSet<KeyDuration>>,
+    keys: &'keys BTreeMap<PianoKey, BTreeSet<KeyDuration>>,
 }
 
-impl<'player> PianoRoll<'player> {
+impl<'player, 'keys> PianoRoll<'player, 'keys> {
     // TODO: builder
     pub fn new(
         midi: &'player MidiPlayer,
         preference: Accidental,
         key_height: f32,
         seconds_per_width: f32,
-        keys: BTreeMap<PianoKey, BTreeSet<KeyDuration>>,
+        keys: &'keys BTreeMap<PianoKey, BTreeSet<KeyDuration>>,
     ) -> Self {
         Self {
             key_height,
@@ -80,7 +80,7 @@ impl<'player> PianoRoll<'player> {
     }
 }
 
-impl PianoRoll<'_> {
+impl PianoRoll<'_, '_> {
     fn draw_key_ui<'s>(
         &'s self,
         ui: &'s Ui,
@@ -225,7 +225,7 @@ impl PianoRoll<'_> {
     }
 }
 
-impl Widget for PianoRoll<'_> {
+impl Widget for PianoRoll<'_, '_> {
     fn ui(self, ui: &mut Ui) -> Response {
         Frame::dark_canvas(ui.style())
             .show(ui, |ui| {

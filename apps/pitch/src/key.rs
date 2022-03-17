@@ -10,6 +10,7 @@ pub struct MusicalNote {
     octave: u8,
 }
 
+// TODO: frequencies
 impl Display for MusicalNote {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.letter)?;
