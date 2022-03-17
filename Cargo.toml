@@ -13,4 +13,5 @@ debug = 1
 
 [patch.crates-io]
 microfft = { git = "https://gitlab.com/teskje/microfft-rs.git", rev = "f783b1effe66a24984f46b3fccca00d18fda5970" }
-eframe = { git = "https://github.com/emilk/egui", rev = "c19a7ff34f162ee7162de0b11277de42415991ff" }
+eframe = { git = "https://github.com/emilk/egui", rev = "c8f6cae3624e2c1303f7d7ca0158ae3b07b8ac15" }
+epaint = { git = "https://github.com/emilk/egui", rev = "c8f6cae3624e2c1303f7d7ca0158ae3b07b8ac15" }

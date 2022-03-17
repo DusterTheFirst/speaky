@@ -65,13 +65,11 @@ pub enum AudioStep {
 }
 
 impl Application {
-    pub const NAME: &'static str = "Pitch";
-
-    pub fn new() -> Self {
+    pub fn new(recently_opened_files: LinkedHashSet<PathBuf>) -> Self {
         Self {
-            recently_opened_files: LinkedHashSet::new(),
+            recently_opened_files,
 
-            midi: MidiPlayer::new(Application::NAME),
+            midi: MidiPlayer::new(crate::NAME),
 
             seconds_per_width: 30.0,
             key_height: 15.0,
@@ -83,7 +81,7 @@ impl Application {
         }
     }
 
-    fn open_file(&mut self, path: PathBuf, ctx: Context, frame: Frame) {
+    fn open_file(&mut self, path: PathBuf, ctx: Context) {
         // Verify file
         // path.extension()
         let file = File::open(&path).expect("Failed to open file");
@@ -162,7 +160,7 @@ impl Application {
                 };
 
                 progress.store(packet.ts() as f32 / track_frames as f32, Ordering::SeqCst);
-                frame.request_repaint();
+                ctx.request_repaint();
 
                 // Consume any new metadata that has been read since the last packet.
                 while !format.metadata().is_latest() {
@@ -209,25 +207,25 @@ impl Application {
 
             step.store(AudioStep::Analyzing, Ordering::SeqCst);
             progress.store(0.0, Ordering::SeqCst);
-            frame.request_repaint();
+            ctx.request_repaint();
 
             if let Some(spec) = spec {
                 let waveform = Waveform::new(samples, spec.rate);
 
                 assert_eq!(waveform.len() as u64, track_frames);
 
-                const STEP: usize = 1000;
+                const WINDOW_WIDTH: usize = 700;
                 const FFT_WIDTH: usize = 2048;
 
-                let windows = (0..waveform.len() - STEP)
-                    .step_by(STEP)
-                    .map(|start| start..start + 100);
+                let windows = (0..waveform.len() - WINDOW_WIDTH)
+                    .step_by(WINDOW_WIDTH)
+                    .map(|start| start..start + WINDOW_WIDTH);
 
-                let mut image = AlphaImage::new([dbg!(windows.len()), FFT_WIDTH]);
+                let mut image = AlphaImage::new([dbg!(windows.len()), FFT_WIDTH / 2]);
 
                 for (i, window) in windows.enumerate() {
                     progress.store(i as f32 / image.width() as f32, Ordering::SeqCst);
-                    frame.request_repaint();
+                    ctx.request_repaint();
 
                     let waveform = waveform.slice(window);
                     let spectrum = waveform.spectrum(spectrum::Window::Hann, FFT_WIDTH);
@@ -251,7 +249,7 @@ impl Application {
             }
 
             step.store(AudioStep::None, Ordering::SeqCst);
-            frame.request_repaint();
+            ctx.request_repaint();
         });
     }
 
@@ -297,7 +295,6 @@ impl Application {
                     .path
                     .expect("drag and drop not supported on web platform yet"),
                 ui.ctx().clone(),
-                frame.clone(),
             )
         }
     }
@@ -329,7 +326,7 @@ impl App for Application {
                         ui.close_menu();
 
                         if let Some(path) = rfd::FileDialog::new().pick_file() {
-                            self.open_file(path, ctx.clone(), frame.clone());
+                            self.open_file(path, ctx.clone());
                         }
                     }
                     ui.add_enabled_ui(!self.recently_opened_files.is_empty(), |ui| {
@@ -380,7 +377,7 @@ impl App for Application {
 
                             // Delay file open until all files have been put on screen.
                             if let Some(selected_file) = selected_file {
-                                self.open_file(selected_file, ctx.clone(), frame.clone());
+                                self.open_file(selected_file, ctx.clone());
                             }
 
                             ui.separator();
@@ -412,16 +409,12 @@ impl App for Application {
         });
 
         if let Some(spectrum) = self.spectrum.read().as_ref() {
-            TopBottomPanel::bottom("spectrum").show(ctx, |ui| {
-                eframe::egui::Frame::dark_canvas(ui.style())
-                    .show(ui, |ui| {
-                        ScrollArea::horizontal().show(ui, |ui| {
-                            let scale = 100.0 / spectrum.size_vec2().y;
-
-                            ui.image(spectrum, spectrum.size_vec2() * scale)
-                        });
-                    });
-            });
+            TopBottomPanel::bottom("spectrum")
+                .resizable(true)
+                .frame(eframe::egui::Frame::dark_canvas(&ctx.style()))
+                .show(ctx, |ui| {
+                    ScrollArea::both().show(ui, |ui| ui.image(spectrum, spectrum.size_vec2()));
+                });
         }
 
         CentralPanel::default().show(ctx, |ui| {
@@ -471,18 +464,8 @@ impl App for Application {
         });
     }
 
-    fn setup(&mut self, _ctx: &Context, _frame: &epi::Frame, storage: Option<&dyn Storage>) {
-        if let Some(storage) = storage {
-            self.recently_opened_files = epi::get_value(storage, APP_KEY).unwrap_or_default();
-        }
-    }
-
     fn save(&mut self, storage: &mut dyn Storage) {
         epi::set_value(storage, APP_KEY, &self.recently_opened_files);
-    }
-
-    fn name(&self) -> &str {
-        Self::NAME
     }
 
     fn persist_native_window(&self) -> bool {

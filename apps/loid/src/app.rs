@@ -146,7 +146,7 @@ impl Application {
     // }
 
     // FIXME: broken on web
-    fn play(&self, waveform: &Waveform<'_>, frame: Frame) {
+    fn play(&self, waveform: &Waveform<'_>, ctx: Context) {
         tracing::info!(
             "Playing {} samples ({} seconds)",
             waveform.len(),
@@ -175,7 +175,7 @@ impl Application {
                         is_playing.store(false, Ordering::SeqCst);
                     }
                 };
-                frame.request_repaint();
+                ctx.request_repaint();
             }
         });
 
@@ -273,7 +273,7 @@ impl App for Application {
                                 self.waveform
                                     .as_ref()
                                     .expect("button cannot be pressed with no waveform"),
-                                frame.clone(),
+                                ctx.clone(),
                             );
                         }
 
@@ -493,9 +493,5 @@ impl App for Application {
                 });
             });
         }
-    }
-
-    fn name(&self) -> &str {
-        "Fun with FFT"
     }
 }

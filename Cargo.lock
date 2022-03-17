@@ -890,7 +890,7 @@ checksum = "6907e25393cdcc1f4f3f513d9aac1e840eb1cc341a0fccb01171f7d14d10b946"
 [[package]]
 name = "eframe"
 version = "0.17.0"
-source = "git+https://github.com/emilk/egui?rev=c19a7ff34f162ee7162de0b11277de42415991ff#c19a7ff34f162ee7162de0b11277de42415991ff"
+source = "git+https://github.com/emilk/egui?rev=c8f6cae3624e2c1303f7d7ca0158ae3b07b8ac15#c8f6cae3624e2c1303f7d7ca0158ae3b07b8ac15"
 dependencies = [
  "egui",
  "egui-winit",
@@ -902,7 +902,7 @@ dependencies = [
 [[package]]
 name = "egui"
 version = "0.17.0"
-source = "git+https://github.com/emilk/egui?rev=c19a7ff34f162ee7162de0b11277de42415991ff#c19a7ff34f162ee7162de0b11277de42415991ff"
+source = "git+https://github.com/emilk/egui?rev=c8f6cae3624e2c1303f7d7ca0158ae3b07b8ac15#c8f6cae3624e2c1303f7d7ca0158ae3b07b8ac15"
 dependencies = [
  "ahash 0.7.6",
  "epaint",
@@ -915,12 +915,13 @@ dependencies = [
 [[package]]
 name = "egui-winit"
 version = "0.17.0"
-source = "git+https://github.com/emilk/egui?rev=c19a7ff34f162ee7162de0b11277de42415991ff#c19a7ff34f162ee7162de0b11277de42415991ff"
+source = "git+https://github.com/emilk/egui?rev=c8f6cae3624e2c1303f7d7ca0158ae3b07b8ac15#c8f6cae3624e2c1303f7d7ca0158ae3b07b8ac15"
 dependencies = [
  "copypasta",
  "dark-light",
  "egui",
  "epi",
+ "glow",
  "instant",
  "serde",
  "tracing",
@@ -931,7 +932,7 @@ dependencies = [
 [[package]]
 name = "egui_glow"
 version = "0.17.0"
-source = "git+https://github.com/emilk/egui?rev=c19a7ff34f162ee7162de0b11277de42415991ff#c19a7ff34f162ee7162de0b11277de42415991ff"
+source = "git+https://github.com/emilk/egui?rev=c8f6cae3624e2c1303f7d7ca0158ae3b07b8ac15#c8f6cae3624e2c1303f7d7ca0158ae3b07b8ac15"
 dependencies = [
  "bytemuck",
  "egui",
@@ -940,6 +941,7 @@ dependencies = [
  "glow",
  "glutin",
  "memoffset",
+ "parking_lot 0.12.0",
  "tracing",
  "wasm-bindgen",
  "web-sys",
@@ -948,7 +950,7 @@ dependencies = [
 [[package]]
 name = "egui_web"
 version = "0.17.0"
-source = "git+https://github.com/emilk/egui?rev=c19a7ff34f162ee7162de0b11277de42415991ff#c19a7ff34f162ee7162de0b11277de42415991ff"
+source = "git+https://github.com/emilk/egui?rev=c8f6cae3624e2c1303f7d7ca0158ae3b07b8ac15#c8f6cae3624e2c1303f7d7ca0158ae3b07b8ac15"
 dependencies = [
  "bytemuck",
  "egui",
@@ -965,7 +967,7 @@ dependencies = [
 [[package]]
 name = "emath"
 version = "0.17.0"
-source = "git+https://github.com/emilk/egui?rev=c19a7ff34f162ee7162de0b11277de42415991ff#c19a7ff34f162ee7162de0b11277de42415991ff"
+source = "git+https://github.com/emilk/egui?rev=c8f6cae3624e2c1303f7d7ca0158ae3b07b8ac15#c8f6cae3624e2c1303f7d7ca0158ae3b07b8ac15"
 dependencies = [
  "bytemuck",
  "serde",
@@ -1004,7 +1006,7 @@ dependencies = [
 [[package]]
 name = "epaint"
 version = "0.17.0"
-source = "git+https://github.com/emilk/egui?rev=c19a7ff34f162ee7162de0b11277de42415991ff#c19a7ff34f162ee7162de0b11277de42415991ff"
+source = "git+https://github.com/emilk/egui?rev=c8f6cae3624e2c1303f7d7ca0158ae3b07b8ac15#c8f6cae3624e2c1303f7d7ca0158ae3b07b8ac15"
 dependencies = [
  "ab_glyph",
  "ahash 0.7.6",
@@ -1012,16 +1014,18 @@ dependencies = [
  "bytemuck",
  "emath",
  "nohash-hasher",
+ "parking_lot 0.12.0",
  "serde",
 ]
 
 [[package]]
 name = "epi"
 version = "0.17.0"
-source = "git+https://github.com/emilk/egui?rev=c19a7ff34f162ee7162de0b11277de42415991ff#c19a7ff34f162ee7162de0b11277de42415991ff"
+source = "git+https://github.com/emilk/egui?rev=c8f6cae3624e2c1303f7d7ca0158ae3b07b8ac15#c8f6cae3624e2c1303f7d7ca0158ae3b07b8ac15"
 dependencies = [
  "directories-next",
  "egui",
+ "glow",
  "ron",
  "serde",
  "tracing",
@@ -2140,6 +2144,7 @@ dependencies = [
  "audio",
  "color-eyre",
  "eframe",
+ "epaint",
  "flume",
  "futures-lite",
  "midir",
