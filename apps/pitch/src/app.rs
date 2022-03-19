@@ -2,10 +2,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs::File,
     path::PathBuf,
-    sync::{
-        atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering},
-        Arc,
-    },
+    sync::{atomic::Ordering, Arc},
     thread,
     time::Duration,
 };
@@ -14,24 +11,23 @@ use atomic::Atomic;
 use audio::waveform::Waveform;
 use eframe::{
     egui::{
-        style::Margin, Button, CentralPanel, Context, DroppedFile, Grid, ProgressBar, ScrollArea,
-        Slider, TextFormat, TopBottomPanel, Ui, Window,
+        Button, CentralPanel, Context, Grid, ProgressBar, ScrollArea, Slider, TextFormat,
+        TopBottomPanel, Ui, Window,
     },
     emath::Align2,
-    epaint::{text::LayoutJob, AlphaImage, Color32, ColorImage, TextureHandle, Vec2},
+    epaint::{text::LayoutJob, AlphaImage, Color32, TextureHandle, Vec2},
     epi::{self, App, Frame, Storage, APP_KEY},
 };
 use parking_lot::RwLock;
 use ritelinked::LinkedHashSet;
 use spectrum::WaveformSpectrum;
 use symphonia::core::{
-    audio::{AudioBuffer, SampleBuffer},
+    audio::SampleBuffer,
     codecs::{DecoderOptions, CODEC_TYPE_NULL},
     formats::FormatOptions,
     io::MediaSourceStream,
     meta::MetadataOptions,
     probe::Hint,
-    units::TimeBase,
 };
 use tracing::info;
 
@@ -40,6 +36,8 @@ use crate::{
     midi::MidiPlayer,
     piano_roll::{KeyDuration, PianoRoll},
 };
+
+type Notes = BTreeMap<PianoKey, BTreeSet<KeyDuration>>;
 
 pub struct Application {
     recently_opened_files: LinkedHashSet<PathBuf>,
@@ -50,22 +48,25 @@ pub struct Application {
     preference: Accidental,
 
     // TODO: parking lot?
-    notes: Arc<RwLock<Option<BTreeMap<PianoKey, BTreeSet<KeyDuration>>>>>,
+    notes: Arc<RwLock<Option<Notes>>>,
     spectrum: Arc<RwLock<Option<TextureHandle>>>,
-    audio_progress: Arc<(Atomic<AudioStep>, Atomic<f32>)>,
+    audio_analysis: Arc<Atomic<AudioStep>>,
 
     midi: MidiPlayer,
 }
 
 #[derive(Debug, Clone, Copy)]
+#[repr(align(8))] // Allow native atomic instructions
 pub enum AudioStep {
     None,
-    Decoding,
-    Analyzing,
+    Decoding(f32),
+    Analyzing(f32),
 }
 
 impl Application {
     pub fn new(recently_opened_files: LinkedHashSet<PathBuf>) -> Self {
+        assert!(Atomic::<AudioStep>::is_lock_free());
+
         Self {
             recently_opened_files,
 
@@ -75,9 +76,30 @@ impl Application {
             key_height: 15.0,
             preference: Accidental::Flat,
 
-            notes: Default::default(),
+            notes: Arc::new(RwLock::new(Some(
+                PianoKey::all()
+                    .map(|key| {
+                        let duration = Duration::from_secs_f32(0.1);
+                        let spacing = (0.1 * 1000.0) as u64;
+                        let key_index = key.key_u8() - 1;
+
+                        (
+                            key,
+                            BTreeSet::from([
+                                KeyDuration::new(spacing * key_index as u64, duration),
+                                KeyDuration::new(
+                                    spacing
+                                        * (PianoKey::all().last().unwrap().key_u8() - key_index)
+                                            as u64,
+                                    duration,
+                                ),
+                            ]),
+                        )
+                    })
+                    .collect(),
+            ))),
             spectrum: Default::default(),
-            audio_progress: Arc::new((Atomic::new(AudioStep::None), Atomic::new(0.0))),
+            audio_analysis: Arc::new(Atomic::new(AudioStep::None)),
         }
     }
 
@@ -120,137 +142,142 @@ impl Application {
         let track_id = track.id;
         let track_frames = track.codec_params.n_frames.expect("unknown duration");
 
-        let audio_progress = self.audio_progress.clone();
+        let audio_analysis = self.audio_analysis.clone();
         let spectrum = self.spectrum.clone();
 
         let preference = self.preference;
 
-        thread::spawn(move || {
-            let (step, progress) = audio_progress.as_ref();
+        thread::Builder::new()
+            .name("file-decode-analysis".to_string())
+            .spawn(move || {
+                audio_analysis.store(AudioStep::Decoding(0.0), Ordering::SeqCst);
 
-            step.store(AudioStep::Decoding, Ordering::SeqCst);
-            progress.store(0.0, Ordering::SeqCst);
+                let mut spec = None;
+                let mut sample_buf = None;
+                let mut samples = Vec::new();
 
-            let mut spec = None;
-            let mut sample_buf = None;
-            let mut samples = Vec::new();
+                // The decode loop.
+                loop {
+                    // Get the next packet from the media format.
+                    let packet = match format.next_packet() {
+                        Ok(packet) => packet,
+                        // Err(symphonia::core::errors::Error::ResetRequired) => {
+                        //     // The track list has been changed. Re-examine it and create a new set of decoders,
+                        //     // then restart the decode loop. This is an advanced feature and it is not
+                        //     // unreasonable to consider this "the end." As of v0.5.0, the only usage of this is
+                        //     // for chained OGG physical streams.
+                        //     unimplemented!();
+                        // }
+                        Err(symphonia::core::errors::Error::IoError(e))
+                            if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+                        {
+                            info!("Reached end of file");
+                            break;
+                        }
+                        Err(err) => {
+                            // A unrecoverable error occured, halt decoding.
+                            panic!("{}", err);
+                        }
+                    };
 
-            // The decode loop.
-            loop {
-                // Get the next packet from the media format.
-                let packet = match format.next_packet() {
-                    Ok(packet) => packet,
-                    // Err(symphonia::core::errors::Error::ResetRequired) => {
-                    //     // The track list has been changed. Re-examine it and create a new set of decoders,
-                    //     // then restart the decode loop. This is an advanced feature and it is not
-                    //     // unreasonable to consider this "the end." As of v0.5.0, the only usage of this is
-                    //     // for chained OGG physical streams.
-                    //     unimplemented!();
-                    // }
-                    Err(symphonia::core::errors::Error::IoError(e))
-                        if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-                    {
-                        info!("Reached end of file");
-                        break;
-                    }
-                    Err(err) => {
-                        // A unrecoverable error occured, halt decoding.
-                        panic!("{}", err);
-                    }
-                };
-
-                progress.store(packet.ts() as f32 / track_frames as f32, Ordering::SeqCst);
-                ctx.request_repaint();
-
-                // Consume any new metadata that has been read since the last packet.
-                while !format.metadata().is_latest() {
-                    // Pop the old head of the metadata queue.
-                    format.metadata().pop();
-
-                    // Consume the new metadata at the head of the metadata queue.
-                }
-
-                // If the packet does not belong to the selected track, skip over it.
-                if packet.track_id() != track_id {
-                    continue;
-                }
-
-                // Decode the packet into audio samples.
-                match decoder.decode(&packet) {
-                    Ok(decoded) => {
-                        let spec = spec.get_or_insert(*decoded.spec());
-
-                        let sample_buf = sample_buf.get_or_insert_with(|| {
-                            SampleBuffer::<f32>::new(decoded.capacity() as u64, *spec)
-                        });
-
-                        sample_buf.copy_planar_ref(decoded);
-
-                        samples.extend_from_slice(
-                            &sample_buf.samples()[..sample_buf.len() / spec.channels.count()],
-                        );
-                    }
-                    // Err(symphonia::core::errors::Error::IoError(_)) => {
-                    //     // The packet failed to decode due to an IO error, skip the packet.
-                    //     continue;
-                    // }
-                    // Err(symphonia::core::errors::Error::DecodeError(_)) => {
-                    //     // The packet failed to decode due to invalid data, skip the packet.
-                    //     continue;
-                    // }
-                    Err(err) => {
-                        // An unrecoverable error occured, halt decoding.
-                        panic!("{}", err);
-                    }
-                }
-            }
-
-            step.store(AudioStep::Analyzing, Ordering::SeqCst);
-            progress.store(0.0, Ordering::SeqCst);
-            ctx.request_repaint();
-
-            if let Some(spec) = spec {
-                let waveform = Waveform::new(samples, spec.rate);
-
-                assert_eq!(waveform.len() as u64, track_frames);
-
-                const WINDOW_WIDTH: usize = 700;
-                const FFT_WIDTH: usize = 2048;
-
-                let windows = (0..waveform.len() - WINDOW_WIDTH)
-                    .step_by(WINDOW_WIDTH)
-                    .map(|start| start..start + WINDOW_WIDTH);
-
-                let mut image = AlphaImage::new([dbg!(windows.len()), FFT_WIDTH / 2]);
-
-                for (i, window) in windows.enumerate() {
-                    progress.store(i as f32 / image.width() as f32, Ordering::SeqCst);
+                    audio_analysis.store(
+                        AudioStep::Decoding(packet.ts() as f32 / track_frames as f32),
+                        Ordering::SeqCst,
+                    );
                     ctx.request_repaint();
 
-                    let waveform = waveform.slice(window);
-                    let spectrum = waveform.spectrum(spectrum::Window::Hann, FFT_WIDTH);
+                    // Consume any new metadata that has been read since the last packet.
+                    while !format.metadata().is_latest() {
+                        // Pop the old head of the metadata queue.
+                        format.metadata().pop();
 
-                    let width = image.width();
-                    for (pixel, amplitude) in image.pixels[i..]
-                        .iter_mut()
-                        .step_by(width)
-                        .zip(spectrum.amplitudes_real())
-                    {
-                        *pixel = (u8::MAX as f32 * amplitude).round() as u8
+                        // Consume the new metadata at the head of the metadata queue.
                     }
 
-                    // let key = spectrum
-                    //     .main_frequency()
-                    //     .and_then(|(_bucket, f)| PianoKey::from_concert_pitch(f))
-                    //     .map(|key| dbg!(key.as_note(preference)));
+                    // If the packet does not belong to the selected track, skip over it.
+                    if packet.track_id() != track_id {
+                        continue;
+                    }
+
+                    // Decode the packet into audio samples.
+                    match decoder.decode(&packet) {
+                        Ok(decoded) => {
+                            let spec = spec.get_or_insert(*decoded.spec());
+
+                            let sample_buf = sample_buf.get_or_insert_with(|| {
+                                SampleBuffer::<f32>::new(decoded.capacity() as u64, *spec)
+                            });
+
+                            sample_buf.copy_planar_ref(decoded);
+
+                            samples.extend_from_slice(
+                                &sample_buf.samples()[..sample_buf.len() / spec.channels.count()],
+                            );
+                        }
+                        // Err(symphonia::core::errors::Error::IoError(_)) => {
+                        //     // The packet failed to decode due to an IO error, skip the packet.
+                        //     continue;
+                        // }
+                        // Err(symphonia::core::errors::Error::DecodeError(_)) => {
+                        //     // The packet failed to decode due to invalid data, skip the packet.
+                        //     continue;
+                        // }
+                        Err(err) => {
+                            // An unrecoverable error occured, halt decoding.
+                            panic!("{}", err);
+                        }
+                    }
                 }
 
-                *spectrum.write() = Some(ctx.load_texture("fft-spectrum", image));
-            }
+                audio_analysis.store(AudioStep::Analyzing(0.0), Ordering::SeqCst);
+                ctx.request_repaint();
 
-            step.store(AudioStep::None, Ordering::SeqCst);
-            ctx.request_repaint();
-        });
+                if let Some(spec) = spec {
+                    let waveform = Waveform::new(samples, spec.rate);
+
+                    assert_eq!(waveform.len() as u64, track_frames);
+
+                    const WINDOW_WIDTH: usize = 700;
+                    const FFT_WIDTH: usize = 2048;
+
+                    let windows = (0..waveform.len() - WINDOW_WIDTH)
+                        .step_by(WINDOW_WIDTH)
+                        .map(|start| start..start + WINDOW_WIDTH);
+
+                    let mut image = AlphaImage::new([dbg!(windows.len()), FFT_WIDTH / 2]);
+
+                    for (i, window) in windows.enumerate() {
+                        audio_analysis.store(
+                            AudioStep::Analyzing(i as f32 / image.width() as f32),
+                            Ordering::SeqCst,
+                        );
+                        ctx.request_repaint();
+
+                        let waveform = waveform.slice(window);
+                        let spectrum = waveform.spectrum(spectrum::Window::Hann, FFT_WIDTH);
+
+                        let width = image.width();
+                        for (pixel, amplitude) in image.pixels[i..]
+                            .iter_mut()
+                            .step_by(width)
+                            .zip(spectrum.amplitudes_real())
+                        {
+                            *pixel = (u8::MAX as f32 * amplitude).round() as u8
+                        }
+
+                        // let key = spectrum
+                        //     .main_frequency()
+                        //     .and_then(|(_bucket, f)| PianoKey::from_concert_pitch(f))
+                        //     .map(|key| dbg!(key.as_note(preference)));
+                    }
+
+                    *spectrum.write() = Some(ctx.load_texture("fft-spectrum", image));
+                }
+
+                audio_analysis.store(AudioStep::None, Ordering::SeqCst);
+                ctx.request_repaint();
+            })
+            .expect("unable to spawn decode thread");
     }
 
     // TODO: make sexier
@@ -302,21 +329,24 @@ impl Application {
 
 impl App for Application {
     fn update(&mut self, ctx: &Context, frame: &epi::Frame) {
-        match self.audio_progress.0.load(Ordering::SeqCst) {
-            AudioStep::None => {}
-            step @ (AudioStep::Decoding | AudioStep::Analyzing) => {
-                Window::new(format!("{:?}", step))
-                    .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-                    .auto_sized()
-                    .collapsible(false)
-                    .show(ctx, |ui| {
-                        ui.add(
-                            ProgressBar::new(self.audio_progress.1.load(Ordering::SeqCst))
-                                .show_percentage()
-                                .desired_width(ui.available_width() / 2.0),
-                        )
-                    });
-            }
+        let analysis = match self.audio_analysis.load(Ordering::SeqCst) {
+            AudioStep::None => None,
+            AudioStep::Decoding(progress) => Some(("Decoding", progress)),
+            AudioStep::Analyzing(progress) => Some(("Analyzing", progress)),
+        };
+
+        if let Some((step, progress)) = analysis {
+            Window::new(format!("{:?}", step))
+                .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+                .auto_sized()
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.add(
+                        ProgressBar::new(progress)
+                            .show_percentage()
+                            .desired_width(ui.available_width() / 2.0),
+                    )
+                });
         }
 
         TopBottomPanel::top("nav_bar").show(ctx, |ui| {
