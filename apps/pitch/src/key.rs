@@ -153,8 +153,9 @@ impl PianoKey {
     // pub const MAX: Self = unsafe { Self(NonZeroU8::new_unchecked(88)) };
     // pub const MIN: Self = unsafe { Self(NonZeroU8::new_unchecked(1)) };
 
-    pub fn all() -> impl ExactSizeIterator<Item = Self> {
-        (1..=88).map(|key| PianoKey::new(key).unwrap())
+    /// All the piano keys from highest to lowest
+    pub fn all() -> impl DoubleEndedIterator<Item = Self> + ExactSizeIterator<Item = Self> {
+        (1..=88).rev().map(|key| PianoKey::new(key).unwrap())
     }
 
     pub fn new(key: u8) -> Option<Self> {
@@ -174,21 +175,17 @@ impl PianoKey {
         let twelfth_root = 2.0f32.powf(1.0 / 12.0);
 
         // Raise to the power of keys away from A4
-        twelfth_root.powi(self.key_u8() as i32 - 49)
+        twelfth_root.powi(self.number() as i32 - 49)
     }
 
-    pub fn key(&self) -> NonZeroU8 {
-        self.0
-    }
-
-    pub fn key_u8(&self) -> u8 {
+    pub fn number(&self) -> u8 {
         self.0.get()
     }
 
     // TODO: Scales?
     pub fn as_note(&self, preference: Accidental) -> MusicalNote {
         // Although the piano starts with A0, the octave starts with C0
-        let key_from_c0 = self.key_u8() + 8;
+        let key_from_c0 = self.number() + 8;
 
         // Quantize by the 12 semitones in an octave
         let note_offset = key_from_c0 % 12;
@@ -220,7 +217,7 @@ impl PianoKey {
 
     pub fn is_white(&self) -> bool {
         // Although the piano starts with A0, the octave starts with C0
-        let key_from_c0 = self.key_u8() + 8;
+        let key_from_c0 = self.number() + 8;
 
         // Quantize by the 12 semitones in an octave
         let note_offset = key_from_c0 % 12;

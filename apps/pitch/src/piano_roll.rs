@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    time::Duration,
-};
+use std::{collections::BTreeMap, time::Duration};
 
 use eframe::{
     egui::{Frame, Id, Response, ScrollArea, Sense, TextFormat, Ui, Widget},
@@ -14,26 +11,28 @@ use crate::{
     midi::MidiPlayer,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct KeyDuration {
-    // TODO: better name
-    // Start in us
-    start: u64,
-    // Duration in us
-    duration: Duration,
+// FIXME: better data representation?
+// The start of the keypress in milliseconds
+pub type KeyStart = u128;
+// The duration of the keypress
+pub type KeyDuration = Duration;
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+pub struct KeyPress {
+    start: KeyStart,
+    duration: KeyDuration,
 }
 
-impl KeyDuration {
-    pub fn new(start: u64, duration: Duration) -> Self {
-        Self { start, duration }
+impl KeyPress {
+    pub fn new(start: impl Into<KeyStart>, duration: KeyDuration) -> Self {
+        Self {
+            start: start.into(),
+            duration,
+        }
     }
 
     pub fn start_secs(&self) -> f32 {
         self.start as f32 / 1000.0
-    }
-
-    pub fn start_micros(&self) -> u64 {
-        self.start
     }
 
     pub fn duration_secs(&self) -> f32 {
@@ -49,6 +48,91 @@ impl KeyDuration {
     }
 }
 
+#[derive(Debug, Default, PartialEq, Eq, Clone, Hash)]
+pub struct KeyPresses {
+    key_list: BTreeMap<KeyStart, KeyDuration>,
+}
+
+impl FromIterator<KeyPress> for KeyPresses {
+    fn from_iter<T: IntoIterator<Item = KeyPress>>(iter: T) -> Self {
+        let mut presses = Self::new();
+        presses.extend(iter);
+        presses
+    }
+}
+
+impl<const N: usize> From<[KeyPress; N]> for KeyPresses {
+    fn from(array: [KeyPress; N]) -> Self {
+        let mut presses = Self::new();
+        presses.extend(array);
+        presses
+    }
+}
+
+impl Extend<KeyPress> for KeyPresses {
+    fn extend<T: IntoIterator<Item = KeyPress>>(&mut self, iter: T) {
+        for keypress in iter.into_iter() {
+            self.add(keypress);
+        }
+    }
+}
+
+impl KeyPresses {
+    pub fn new() -> Self {
+        Self {
+            key_list: BTreeMap::new(),
+        }
+    }
+
+    pub fn iter(
+        &self,
+    ) -> impl ExactSizeIterator<Item = KeyPress> + DoubleEndedIterator<Item = KeyPress> + '_ {
+        self.key_list
+            .iter()
+            .map(|(&start, &duration)| KeyPress { start, duration })
+    }
+
+    pub fn last(&self) -> Option<KeyPress> {
+        self.iter().next_back()
+    }
+
+    pub fn add(&mut self, mut keypress: KeyPress) {
+        // Join with the note before this
+        if let Some((previous_key_start, previous_key_duration)) =
+            self.key_list.range_mut(..keypress.start).next_back()
+        {
+            // Check if the end of the previous keypress overlaps with the start of this keypress
+            if *previous_key_start + previous_key_duration.as_millis() == keypress.start {
+                // Extend the previous key's duration
+                *previous_key_duration += keypress.duration;
+
+                return;
+            }
+        }
+
+        // Join with the note after this
+        if let Some((&next_key_start, &next_key_duration)) =
+            self.key_list.range(keypress.start..).next()
+        {
+            // Check if the end of this keypress overlaps with the start of the next keypress
+            if keypress.start + keypress.duration.as_millis() == next_key_start {
+                // Extend this key's duration
+                keypress.duration += next_key_duration;
+
+                // Remove the note after this
+                self.key_list.remove(&next_key_start);
+            }
+        }
+
+        self.key_list.insert(keypress.start, keypress.duration);
+    }
+
+    // FIXME: Does not verify duration
+    pub fn remove(&mut self, keypress: &KeyPress) {
+        self.key_list.remove(&keypress.start);
+    }
+}
+
 pub struct PianoRoll<'player, 'keys> {
     // TODO: scales?
     preference: Accidental,
@@ -58,7 +142,7 @@ pub struct PianoRoll<'player, 'keys> {
 
     midi: &'player MidiPlayer,
 
-    keys: &'keys BTreeMap<PianoKey, BTreeSet<KeyDuration>>,
+    keys: &'keys BTreeMap<PianoKey, KeyPresses>,
 }
 
 impl<'player, 'keys> PianoRoll<'player, 'keys> {
@@ -68,7 +152,7 @@ impl<'player, 'keys> PianoRoll<'player, 'keys> {
         preference: Accidental,
         key_height: f32,
         seconds_per_width: f32,
-        keys: &'keys BTreeMap<PianoKey, BTreeSet<KeyDuration>>,
+        keys: &'keys BTreeMap<PianoKey, KeyPresses>,
     ) -> Self {
         Self {
             key_height,
@@ -88,8 +172,8 @@ impl PianoRoll<'_, '_> {
         margin: Vec2,
         size: Vec2,
     ) -> impl Iterator<Item = Shape> + 's {
-        PianoKey::all().flat_map(move |key| {
-            let y = (key.key_u8() - 1) as f32 * self.key_height;
+        PianoKey::all().enumerate().flat_map(move |(row, key)| {
+            let y = row as f32 * self.key_height;
 
             let top_left = Pos2::new(0.0, y) + drawing_window.min.to_vec2() + margin;
 
@@ -130,23 +214,21 @@ impl PianoRoll<'_, '_> {
         drawing_window: Rect,
         margin: Vec2,
     ) -> impl Iterator<Item = Shape> + 's {
-        self.keys.iter().flat_map(move |(&key, durations)| {
-            let key_u8 = key.key_u8();
+        self.keys.iter().flat_map(move |(&key, key_presses)| {
+            let y = (PianoKey::all().len() as u8 - key.number()) as f32 * self.key_height;
 
-            let y = (key_u8 - 1) as f32 * self.key_height;
-
-            durations.iter().flat_map(move |duration| {
+            key_presses.iter().flat_map(move |keypress| {
                 let rect = Rect::from_min_size(
-                    Pos2::new(duration.start_secs() * self.seconds_per_width, y),
+                    Pos2::new(keypress.start_secs() * self.seconds_per_width, y),
                     Vec2::new(
-                        duration.duration_secs() * self.seconds_per_width,
+                        keypress.duration_secs() * self.seconds_per_width,
                         self.key_height,
                     ),
                 )
                 .translate(drawing_window.min.to_vec2() + margin);
 
                 let response = ui
-                    .interact(rect, Id::new((key, duration)), Sense::click_and_drag())
+                    .interact(rect, Id::new((key, keypress)), Sense::click_and_drag())
                     .on_hover_ui_at_pointer(|ui| {
                         let note = key.as_note(Accidental::Sharp);
 
@@ -176,7 +258,7 @@ impl PianoRoll<'_, '_> {
                     });
 
                 if response.clicked() {
-                    self.midi.play_piano(key, duration.duration())
+                    self.midi.play_piano(key, keypress.duration())
                 }
 
                 [
@@ -242,9 +324,8 @@ impl Widget for PianoRoll<'_, '_> {
                             .keys
                             .values()
                             .filter_map(|set| {
-                                set.iter()
-                                    .last()
-                                    .map(|duration| duration.end_secs() * self.seconds_per_width)
+                                set.last()
+                                    .map(|keypress| keypress.end_secs() * self.seconds_per_width)
                             })
                             .reduce(f32::max)
                             .unwrap_or_default()

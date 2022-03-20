@@ -1,6 +1,7 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     fs::File,
+    ops::Deref,
     path::PathBuf,
     sync::{atomic::Ordering, Arc},
     thread,
@@ -16,9 +17,9 @@ use eframe::{
     },
     emath::Align2,
     epaint::{text::LayoutJob, AlphaImage, Color32, TextureHandle, Vec2},
-    epi::{self, App, Frame, Storage, APP_KEY},
+    epi::{self, App, Storage, APP_KEY},
 };
-use parking_lot::RwLock;
+use parking_lot::{RwLock, RwLockReadGuard};
 use ritelinked::LinkedHashSet;
 use spectrum::WaveformSpectrum;
 use symphonia::core::{
@@ -34,10 +35,8 @@ use tracing::info;
 use crate::{
     key::{Accidental, PianoKey},
     midi::MidiPlayer,
-    piano_roll::{KeyDuration, PianoRoll},
+    piano_roll::{KeyDuration, KeyPress, KeyPresses, PianoRoll},
 };
-
-type Notes = BTreeMap<PianoKey, BTreeSet<KeyDuration>>;
 
 pub struct Application {
     recently_opened_files: LinkedHashSet<PathBuf>,
@@ -48,7 +47,7 @@ pub struct Application {
     preference: Accidental,
 
     // TODO: parking lot?
-    notes: Arc<RwLock<Option<Notes>>>,
+    notes: Arc<RwLock<Option<BTreeMap<PianoKey, KeyPresses>>>>,
     spectrum: Arc<RwLock<Option<TextureHandle>>>,
     audio_analysis: Arc<Atomic<AudioStep>>,
 
@@ -61,6 +60,7 @@ pub enum AudioStep {
     None,
     Decoding(f32),
     Analyzing(f32),
+    GeneratingSpectrogram,
 }
 
 impl Application {
@@ -73,24 +73,23 @@ impl Application {
             midi: MidiPlayer::new(crate::NAME),
 
             seconds_per_width: 30.0,
-            key_height: 15.0,
+            key_height: 10.0,
             preference: Accidental::Flat,
 
             notes: Arc::new(RwLock::new(Some(
                 PianoKey::all()
-                    .map(|key| {
+                    .enumerate()
+                    .map(|(index, key)| {
                         let duration = Duration::from_secs_f32(0.1);
                         let spacing = (0.1 * 1000.0) as u64;
-                        let key_index = key.key_u8() - 1;
 
                         (
                             key,
-                            BTreeSet::from([
-                                KeyDuration::new(spacing * key_index as u64, duration),
-                                KeyDuration::new(
-                                    spacing
-                                        * (PianoKey::all().last().unwrap().key_u8() - key_index)
-                                            as u64,
+                            KeyPresses::from([
+                                KeyPress::new(spacing * index as u64, duration),
+                                KeyPress::new(spacing * 10, duration),
+                                KeyPress::new(
+                                    spacing * (PianoKey::all().len() - index) as u64,
                                     duration,
                                 ),
                             ]),
@@ -144,6 +143,7 @@ impl Application {
 
         let audio_analysis = self.audio_analysis.clone();
         let spectrum = self.spectrum.clone();
+        let notes = self.notes.clone();
 
         let preference = self.preference;
 
@@ -223,7 +223,7 @@ impl Application {
                         //     continue;
                         // }
                         Err(err) => {
-                            // An unrecoverable error occured, halt decoding.
+                            // An unrecoverable error occurred, halt decoding.
                             panic!("{}", err);
                         }
                     }
@@ -237,14 +237,18 @@ impl Application {
 
                     assert_eq!(waveform.len() as u64, track_frames);
 
-                    const WINDOW_WIDTH: usize = 700;
-                    const FFT_WIDTH: usize = 2048;
+                    const FFT_WIDTH: usize = 0x4000;
+                    const WINDOW_WIDTH: usize = FFT_WIDTH / 2;
 
                     let windows = (0..waveform.len() - WINDOW_WIDTH)
                         .step_by(WINDOW_WIDTH)
                         .map(|start| start..start + WINDOW_WIDTH);
+                    let window_count = dbg!(windows.len());
 
-                    let mut image = AlphaImage::new([dbg!(windows.len()), FFT_WIDTH / 2]);
+                    let seconds_per_window = WINDOW_WIDTH as f64 / spec.rate as f64;
+
+                    let mut image = AlphaImage::new([window_count, FFT_WIDTH / 2]);
+                    let mut keys = BTreeMap::<PianoKey, KeyPresses>::new();
 
                     for (i, window) in windows.enumerate() {
                         audio_analysis.store(
@@ -257,21 +261,53 @@ impl Application {
                         let spectrum = waveform.spectrum(spectrum::Window::Hann, FFT_WIDTH);
 
                         let width = image.width();
-                        for (pixel, amplitude) in image.pixels[i..]
+                        let mut max = None;
+                        for (pixel, (bucket, amplitude)) in image.pixels[i..]
                             .iter_mut()
                             .step_by(width)
-                            .zip(spectrum.amplitudes_real())
+                            .zip(spectrum.amplitudes_real().enumerate())
                         {
-                            *pixel = (u8::MAX as f32 * amplitude).round() as u8
+                            *pixel = (u8::MAX as f32 * amplitude).round() as u8;
+
+                            let max = max.get_or_insert((bucket, amplitude));
+                            if amplitude > max.1 {
+                                *max = (bucket, amplitude)
+                            }
                         }
 
-                        // let key = spectrum
-                        //     .main_frequency()
-                        //     .and_then(|(_bucket, f)| PianoKey::from_concert_pitch(f))
-                        //     .map(|key| dbg!(key.as_note(preference)));
+                        let dominant = max.map(|(bucket, amplitude)| {
+                            let frequency = spectrum.freq_from_bucket(bucket) as f32;
+
+                            (
+                                PianoKey::from_concert_pitch(frequency),
+                                frequency,
+                                amplitude,
+                            )
+                        });
+
+                        if let Some((key, frequency, amplitude)) = dominant {
+                            if let Some(key) = key {
+                                // TODO: encode confidence
+                                keys.entry(key).or_default().add(KeyPress::new(
+                                    (i as f64 * seconds_per_window * 1000.0).round() as u64,
+                                    KeyDuration::from_secs_f64(seconds_per_window),
+                                ))
+                            } else {
+                                // TODO:
+                                dbg!(frequency, amplitude);
+                            }
+                        }
                     }
 
-                    *spectrum.write() = Some(ctx.load_texture("fft-spectrum", image));
+                    audio_analysis.store(AudioStep::GeneratingSpectrogram, Ordering::SeqCst);
+                    ctx.request_repaint();
+                    // FIXME: is the above code useful? the context stays locked the whole time the
+                    // image is loaded, so unless we inject an artificial delay here the context will
+                    // stay locked, preventing the repaint of the gui.
+
+                    *notes.write() = Some(keys);
+
+                    // *spectrum.write() = Some(ctx.load_texture("fft-spectrum", image));
                 }
 
                 audio_analysis.store(AudioStep::None, Ordering::SeqCst);
@@ -281,7 +317,7 @@ impl Application {
     }
 
     // TODO: make sexier
-    fn detect_files_being_dropped(&mut self, ui: &mut Ui, frame: &Frame) {
+    fn detect_files_being_dropped(&mut self, ui: &mut Ui) {
         use eframe::egui::*;
 
         // Preview hovering files:
@@ -328,15 +364,17 @@ impl Application {
 }
 
 impl App for Application {
-    fn update(&mut self, ctx: &Context, frame: &epi::Frame) {
+    fn update(&mut self, ctx: &Context, _frame: &epi::Frame) {
         let analysis = match self.audio_analysis.load(Ordering::SeqCst) {
             AudioStep::None => None,
             AudioStep::Decoding(progress) => Some(("Decoding", progress)),
             AudioStep::Analyzing(progress) => Some(("Analyzing", progress)),
+            // TODO: Better display for this
+            AudioStep::GeneratingSpectrogram => Some(("Generating Spectrogram", 0.5)),
         };
 
         if let Some((step, progress)) = analysis {
-            Window::new(format!("{:?}", step))
+            Window::new(step)
                 .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
                 .auto_sized()
                 .collapsible(false)
@@ -438,18 +476,27 @@ impl App for Application {
             });
         });
 
-        if let Some(spectrum) = self.spectrum.read().as_ref() {
+        // Don't block if the spectrum is being written
+        if let Some(spectrum) = self
+            .spectrum
+            .try_read()
+            .and_then(|lock| RwLockReadGuard::try_map(lock, |option| option.as_ref()).ok())
+        {
             TopBottomPanel::bottom("spectrum")
                 .resizable(true)
                 .frame(eframe::egui::Frame::dark_canvas(&ctx.style()))
                 .show(ctx, |ui| {
-                    ScrollArea::both().show(ui, |ui| ui.image(spectrum, spectrum.size_vec2()));
+                    ScrollArea::both()
+                        .show(ui, |ui| ui.image(spectrum.deref(), spectrum.size_vec2()));
                 });
         }
 
         CentralPanel::default().show(ctx, |ui| {
             {
-                let notes = self.notes.read();
+                let notes = self
+                    .notes
+                    .try_read()
+                    .and_then(|lock| RwLockReadGuard::try_map(lock, |option| option.as_ref()).ok());
 
                 ui.set_enabled(notes.is_some());
 
@@ -490,7 +537,7 @@ impl App for Application {
                     });
             }
 
-            self.detect_files_being_dropped(ui, frame);
+            self.detect_files_being_dropped(ui);
         });
     }
 

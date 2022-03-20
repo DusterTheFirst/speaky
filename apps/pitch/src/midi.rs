@@ -1,6 +1,8 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
+    pin::Pin,
     sync::Arc,
+    task::{Context, Poll},
     thread,
     time::{Duration, Instant},
 };
@@ -8,11 +10,11 @@ use std::{
 use async_executor::Executor;
 use async_io::Timer;
 use flume::{Receiver, RecvError, Sender};
-use futures_lite::future;
+use futures_lite::{future, Future};
 use midir::{MidiOutput, MidiOutputConnection};
 use tracing::{debug, info};
 
-use crate::{key::PianoKey, piano_roll::KeyDuration};
+use crate::{key::PianoKey, piano_roll::KeyPresses};
 
 pub struct MidiPlayer {
     sender: Sender<MidiThreadCommand>,
@@ -22,6 +24,34 @@ pub struct MidiPlayer {
 pub enum MidiConnection {
     Disconnected { output: MidiOutput },
     Connected { connection: MidiOutputConnection },
+}
+
+/// Future that will poll a [`Vec`] of futures in order
+struct Race<O> {
+    futures: Vec<Pin<Box<dyn Future<Output = O> + Send>>>,
+}
+
+impl<O> Race<O> {
+    pub fn new(futures: impl IntoIterator<Item = Pin<Box<dyn Future<Output = O> + Send>>>) -> Self {
+        Self {
+            futures: futures.into_iter().collect(),
+        }
+    }
+}
+
+impl<O> Future for Race<O> {
+    type Output = O;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        for future in &mut self.futures {
+            match Future::poll(future.as_mut(), cx) {
+                Poll::Ready(val) => return Poll::Ready(val),
+                Poll::Pending => continue,
+            }
+        }
+
+        Poll::Pending
+    }
 }
 
 impl MidiPlayer {
@@ -75,7 +105,7 @@ impl MidiPlayer {
             .unwrap();
     }
 
-    pub fn play_song(&self, notes: &BTreeMap<PianoKey, BTreeSet<KeyDuration>>) {
+    pub fn play_song(&self, notes: &BTreeMap<PianoKey, KeyPresses>) {
         use futures_lite::prelude::*;
 
         let start = Instant::now();
@@ -85,27 +115,21 @@ impl MidiPlayer {
         self.executor
             .spawn(async move {
                 loop {
-                    let timers = notes
-                        .iter()
-                        .flat_map(|(key, durations)| {
-                            durations.iter().map(move |duration| {
-                                async move {
-                                    Timer::at(
-                                        start + Duration::from_millis(duration.start_micros()),
-                                    )
+                    let timers = Race::new(notes.iter().flat_map(|(&key, key_presses)| {
+                        key_presses.iter().map(move |keypress| {
+                            async move {
+                                Timer::at(start + Duration::from_secs_f32(keypress.start_secs()))
                                     .await;
 
-                                    Some((key, duration))
-                                }
-                                .boxed()
-                            })
-                        }) // TODO: Maybe there is a better way than chaining or futures
-                        .reduce(|future_1, future_2| future::or(future_1, future_2).boxed())
-                        .unwrap_or_else(|| future::ready(None).boxed());
+                                Some((key, keypress))
+                            }
+                            .boxed()
+                        })
+                    }));
 
                     // TODO: merge and send keys together if they have the same deadline
                     match timers.await {
-                        Some((&key, &duration)) => {
+                        Some((key, duration)) => {
                             sender
                                 .send(MidiThreadCommand::PlayNote(
                                     MidiNote::from_piano_key(key),
@@ -137,19 +161,14 @@ async fn midi_thread(mut connection: MidiConnection, thread_commands: Receiver<M
 
     loop {
         // Create future that will poll all timers
-        let notes_off_fut = note_off
-            .iter()
-            .map(|(&note, &deadline)| {
-                async move {
-                    Timer::at(deadline).await;
+        let notes_off_fut = Race::new(note_off.iter().map(|(&note, &deadline)| {
+            async move {
+                Timer::at(deadline).await;
 
-                    MidiAction::TimerWake(note)
-                }
-                .boxed()
-            })
-            // TODO: Maybe there is a better way than chaining or futures
-            .reduce(|future_1, future_2| future::or(future_1, future_2).boxed())
-            .unwrap_or_else(|| future::pending().boxed());
+                MidiAction::TimerWake(note)
+            }
+            .boxed()
+        }));
 
         // Create future that will accept incoming commands
         let commands_fut = async {
@@ -226,7 +245,7 @@ pub struct MidiNote(u8);
 
 impl MidiNote {
     pub fn from_piano_key(key: PianoKey) -> Self {
-        Self(key.key_u8() + 20)
+        Self(key.number() + 20)
     }
 
     pub fn as_u8(&self) -> u8 {

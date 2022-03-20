@@ -2,10 +2,11 @@
 resolver = "2"
 members = ["crates/*", "apps/*"]
 
-[profile.dev]
+[profile.dev-opt]
+inherits = "dev"
 opt-level = 1
 
-[profile.dev.package."*"]
+[profile.dev-opt.package."*"]
 opt-level = 2
 
 [profile.release]
@@ -13,5 +14,9 @@ debug = 1
 
 [patch.crates-io]
 microfft = { git = "https://gitlab.com/teskje/microfft-rs.git", rev = "f783b1effe66a24984f46b3fccca00d18fda5970" }
-eframe = { git = "https://github.com/emilk/egui", rev = "c8f6cae3624e2c1303f7d7ca0158ae3b07b8ac15" }
-epaint = { git = "https://github.com/emilk/egui", rev = "c8f6cae3624e2c1303f7d7ca0158ae3b07b8ac15" }
+
+# eframe = { path = "../egui/eframe" }
+# epaint = { path = "../egui/epaint" }
+
+eframe = { git = "https://github.com/dusterthefirst/egui", branch = "remove-deadlock" }
+epaint = { git = "https://github.com/dusterthefirst/egui", branch = "remove-deadlock" }

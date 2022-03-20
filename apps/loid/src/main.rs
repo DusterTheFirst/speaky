@@ -30,9 +30,11 @@ static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> color_eyre::Result<()> {
-    eframe::run_native("Fun with FFT", eframe::NativeOptions::default(), |_cc| {
-        Box::new(init().unwrap())
-    })
+    eframe::run_native(
+        "Fun with FFT",
+        eframe::NativeOptions::default(),
+        Box::new(|_cc| Box::new(init().unwrap())),
+    )
 }
 
 // ----------------------------------------------------------------------------
@@ -69,7 +71,7 @@ fn main() {
         }
     };
 
-    match eframe::start_web("egui_canvas", |_cc| Box::new(app)) {
+    match eframe::start_web("egui_canvas", Box::new(move |_cc| Box::new(app))) {
         Ok(()) => {
             info!("eframe successfully started");
         }

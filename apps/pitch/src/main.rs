@@ -20,13 +20,17 @@ pub fn main() -> color_eyre::Result<()> {
 
     info!("Starting Application");
 
-    eframe::run_native(NAME, NativeOptions::default(), |cc| {
-        let recently_opened_files = if let Some(storage) = cc.storage {
-            eframe::get_value(storage, APP_KEY).unwrap_or_default()
-        } else {
-            LinkedHashSet::new()
-        };
+    eframe::run_native(
+        NAME,
+        NativeOptions::default(),
+        Box::new(|cc| {
+            let recently_opened_files = if let Some(storage) = cc.storage {
+                eframe::get_value(storage, APP_KEY).unwrap_or_default()
+            } else {
+                LinkedHashSet::new()
+            };
 
-        Box::new(Application::new(recently_opened_files))
-    })
+            Box::new(Application::new(recently_opened_files))
+        }),
+    )
 }
