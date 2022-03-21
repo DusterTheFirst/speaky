@@ -237,7 +237,7 @@ impl Application {
 
                     assert_eq!(waveform.len() as u64, track_frames);
 
-                    const FFT_WIDTH: usize = 0x4000;
+                    const FFT_WIDTH: usize = 8192;
                     const WINDOW_WIDTH: usize = FFT_WIDTH / 2;
 
                     let windows = (0..waveform.len() - WINDOW_WIDTH)
@@ -306,6 +306,9 @@ impl Application {
                     // stay locked, preventing the repaint of the gui.
 
                     *notes.write() = Some(keys);
+
+                    // TODO: Check texture size
+                    // ctx.input().max_texture_side
 
                     // *spectrum.write() = Some(ctx.load_texture("fft-spectrum", image));
                 }
