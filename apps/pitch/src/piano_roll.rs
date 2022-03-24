@@ -351,7 +351,7 @@ impl PianoRoll<'_, '_> {
 
 impl Widget for PianoRoll<'_, '_> {
     fn ui(self, ui: &mut Ui) -> Response {
-        Frame::dark_canvas(ui.style())
+        Frame::canvas(ui.style())
             .show(ui, |ui| {
                 ScrollArea::both().show(ui, |ui| {
                     let drawing_window = ui.available_rect_before_wrap();

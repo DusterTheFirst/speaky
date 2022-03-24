@@ -60,7 +60,8 @@ impl MidiPlayer {
     pub fn new(name: &str) -> Self {
         let midi_output = MidiOutput::new(name).expect("unable to enumerate midi devices");
 
-        let connection = match midi_output.ports().as_slice() {
+        // TODO: expose and implement selection
+        let mut connection = match midi_output.ports().as_slice() {
             // Connect if there is only one port available
             [port] => {
                 let port_name = midi_output.port_name(port).unwrap();
@@ -75,6 +76,29 @@ impl MidiPlayer {
                 output: midi_output,
             },
         };
+
+        // FIXME: TEMP
+        {
+            if let MidiConnection::Connected { connection } = &mut connection {
+                connection
+                    .send(&MidiCommand::AllSoundOff.to_bytes())
+                    .unwrap();
+                thread::sleep(Duration::from_secs_f32(0.1));
+                connection
+                    .send(
+                        &MidiCommand::NoteOn(
+                            MidiNote::from_piano_key(PianoKey::from_concert_pitch(440.0).unwrap()),
+                            120,
+                        )
+                        .to_bytes(),
+                    )
+                    .unwrap();
+                thread::sleep(Duration::from_secs_f32(0.5));
+                connection
+                    .send(&MidiCommand::PitchBendChange(0x2000 + 100).to_bytes())
+                    .unwrap();
+            }
+        }
 
         let (sender, recv) = flume::unbounded();
 
@@ -188,7 +212,7 @@ async fn midi_thread(mut connection: MidiConnection, thread_commands: Receiver<M
                     }
                     MidiConnection::Connected { connection } => {
                         connection
-                            .send(MidiCommand::NoteOn(note).to_bytes().as_slice())
+                            .send(MidiCommand::NoteOn(note, 0b01111111).to_bytes().as_slice())
                             .unwrap();
 
                         let deadline = Instant::now() + duration;
@@ -208,7 +232,7 @@ async fn midi_thread(mut connection: MidiConnection, thread_commands: Receiver<M
                     note_off.remove(&note);
 
                     connection
-                        .send(MidiCommand::NoteOff(note).to_bytes().as_slice())
+                        .send(MidiCommand::NoteOff(note, 0b01111111).to_bytes().as_slice())
                         .unwrap();
                 }
             },
@@ -223,19 +247,24 @@ pub enum MidiThreadCommand {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MidiCommand {
-    NoteOn(MidiNote),
-    NoteOff(MidiNote),
+    NoteOn(MidiNote, u8),  // 7 bit velocity
+    NoteOff(MidiNote, u8), // 7 bit velocity
+    AllSoundOff,
+    PitchBendChange(u16), // 14 bit
 }
 
 impl MidiCommand {
-    pub fn to_bytes(self) -> Vec<u8> {
-        const NOTE_ON_MSG: u8 = 0x90;
-        const NOTE_OFF_MSG: u8 = 0x80;
-        const VELOCITY: u8 = 0x64;
-
+    pub fn to_bytes(self) -> [u8; 3] {
+        #[allow(clippy::unusual_byte_groupings)]
         match self {
-            MidiCommand::NoteOn(note) => vec![NOTE_ON_MSG, note.as_u8(), VELOCITY],
-            MidiCommand::NoteOff(note) => vec![NOTE_OFF_MSG, note.as_u8(), VELOCITY],
+            MidiCommand::NoteOn(note, velocity) => [0b1001_0000, note.as_u8(), velocity],
+            MidiCommand::NoteOff(note, velocity) => [0b1000_0000, note.as_u8(), velocity],
+            MidiCommand::AllSoundOff => [0b1011_0000, 0b0_111_1000, 0b0_000_0000],
+            MidiCommand::PitchBendChange(change) => [
+                0b1110_0000,
+                0b01111111 & (change as u8),        // 7 LSB
+                0b01111111 & ((change >> 7) as u8), // 7 MSB
+            ],
         }
     }
 }
@@ -244,11 +273,17 @@ impl MidiCommand {
 pub struct MidiNote(u8);
 
 impl MidiNote {
-    pub fn from_piano_key(key: PianoKey) -> Self {
-        Self(key.number() + 20)
+    pub fn new(number: u8) -> Self {
+        assert_eq!(number >> 7, 0, "midi notes can only be between 0-127");
+
+        Self(number)
     }
 
-    pub fn as_u8(&self) -> u8 {
+    pub fn from_piano_key(key: PianoKey) -> Self {
+        Self::new(key.number() + 20)
+    }
+
+    pub const fn as_u8(&self) -> u8 {
         self.0
     }
 }

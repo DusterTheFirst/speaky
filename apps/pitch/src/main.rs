@@ -6,10 +6,13 @@ use util::install_tracing;
 
 use crate::app::Application;
 
+mod analysis;
 mod app;
+mod decode;
 mod key;
 mod midi;
 mod piano_roll;
+mod ui_error;
 
 pub const NAME: &str = "Pitch";
 
