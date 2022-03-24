@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, time::Duration};
+use std::{collections::BTreeMap, ops::Deref, time::Duration};
 
 use eframe::{
     egui::{Frame, Id, Response, ScrollArea, Sense, TextFormat, Ui, Widget},
@@ -17,17 +17,39 @@ pub type KeyStart = u128;
 // The duration of the keypress
 pub type KeyDuration = Duration;
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub struct KeyPress {
-    start: KeyStart,
-    duration: KeyDuration,
+    pub start: KeyStart,
+    info: KeyPressInfo,
+}
+
+impl Deref for KeyPress {
+    type Target = KeyPressInfo;
+
+    fn deref(&self) -> &Self::Target {
+        &self.info
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub struct KeyPressInfo {
+    pub duration: KeyDuration,
+    pub intensity: f32,
 }
 
 impl KeyPress {
-    pub fn new(start: impl Into<KeyStart>, duration: KeyDuration) -> Self {
+    pub fn new(
+        start: impl Into<KeyStart>,
+        duration: KeyDuration,
+        intensity: impl Into<f32>,
+    ) -> Self {
         Self {
             start: start.into(),
-            duration,
+            info: KeyPressInfo {
+                duration,
+                intensity: intensity.into(),
+            },
         }
     }
 
@@ -48,9 +70,9 @@ impl KeyPress {
     }
 }
 
-#[derive(Debug, Default, PartialEq, Eq, Clone, Hash)]
+#[derive(Debug, Default, Clone)]
 pub struct KeyPresses {
-    key_list: BTreeMap<KeyStart, KeyDuration>,
+    key_list: BTreeMap<KeyStart, KeyPressInfo>,
 }
 
 impl FromIterator<KeyPress> for KeyPresses {
@@ -89,17 +111,23 @@ impl KeyPresses {
     ) -> impl ExactSizeIterator<Item = KeyPress> + DoubleEndedIterator<Item = KeyPress> + '_ {
         self.key_list
             .iter()
-            .map(|(&start, &duration)| KeyPress { start, duration })
+            .map(|(&start, &info)| KeyPress { start, info })
     }
 
     pub fn last(&self) -> Option<KeyPress> {
         self.iter().next_back()
     }
 
+    // FIXME: what do about intensity
     pub fn add(&mut self, mut keypress: KeyPress) {
         // Join with the note before this
-        if let Some((previous_key_start, previous_key_duration)) =
-            self.key_list.range_mut(..keypress.start).next_back()
+        if let Some((
+            previous_key_start,
+            KeyPressInfo {
+                duration: previous_key_duration,
+                ..
+            },
+        )) = self.key_list.range_mut(..keypress.start).next_back()
         {
             // Check if the end of the previous keypress overlaps with the start of this keypress
             if *previous_key_start + previous_key_duration.as_millis() == keypress.start {
@@ -111,20 +139,25 @@ impl KeyPresses {
         }
 
         // Join with the note after this
-        if let Some((&next_key_start, &next_key_duration)) =
-            self.key_list.range(keypress.start..).next()
+        if let Some((
+            &next_key_start,
+            &KeyPressInfo {
+                duration: next_key_duration,
+                ..
+            },
+        )) = self.key_list.range(keypress.start..).next()
         {
             // Check if the end of this keypress overlaps with the start of the next keypress
             if keypress.start + keypress.duration.as_millis() == next_key_start {
                 // Extend this key's duration
-                keypress.duration += next_key_duration;
+                keypress.info.duration += next_key_duration;
 
                 // Remove the note after this
                 self.key_list.remove(&next_key_start);
             }
         }
 
-        self.key_list.insert(keypress.start, keypress.duration);
+        self.key_list.insert(keypress.start, keypress.info);
     }
 
     // FIXME: Does not verify duration
@@ -190,7 +223,7 @@ impl PianoRoll<'_, '_> {
                     },
                 ),
                 // Shape::rect_stroke(rect, Rounding::none(), Stroke::new(1.0, Color32::WHITE)),
-                // TODO: Measure text and set margin accordingly
+                // TODO: Measure text and set margin accordingly (use galley)
                 // TODO: hover and click on number
                 Shape::text(
                     &ui.fonts(),
@@ -228,7 +261,11 @@ impl PianoRoll<'_, '_> {
                 .translate(drawing_window.min.to_vec2() + margin);
 
                 let response = ui
-                    .interact(rect, Id::new((key, keypress)), Sense::click_and_drag())
+                    .interact(
+                        rect,
+                        Id::new((key, keypress.start)),
+                        Sense::click_and_drag(),
+                    )
                     .on_hover_ui_at_pointer(|ui| {
                         let note = key.as_note(Accidental::Sharp);
 
@@ -254,6 +291,11 @@ impl PianoRoll<'_, '_> {
                             );
 
                             job
+                        });
+
+                        ui.horizontal(|ui| {
+                            ui.label("Intensity: ");
+                            ui.label(keypress.intensity.to_string());
                         });
                     });
 

@@ -16,7 +16,4 @@ debug = 1
 microfft = { git = "https://gitlab.com/teskje/microfft-rs.git", rev = "f783b1effe66a24984f46b3fccca00d18fda5970" }
 
 # eframe = { path = "../egui/eframe" }
-# epaint = { path = "../egui/epaint" }
-
-eframe = { git = "https://github.com/dusterthefirst/egui", branch = "remove-deadlock" }
-epaint = { git = "https://github.com/dusterthefirst/egui", branch = "remove-deadlock" }
+eframe = { git = "https://github.com/emilk/egui", rev = "bcddafb50544ad42ac0b4a26795e8620cae94e64" }

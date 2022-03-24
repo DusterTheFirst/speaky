@@ -9,8 +9,6 @@ tracing = "0.1.31"
 
 # UI
 eframe = { version = "0.17.0", features = ["persistence"] }
-# https://github.com/emilk/egui/commit/c768d1d48e4c8b7620391f4b732ff836bc17adad#r68942300
-epaint = { version = "0.17.0", features = ["multi_threaded"] }
 
 # File open dialog
 rfd = "0.8.0"

@@ -890,7 +890,7 @@ checksum = "6907e25393cdcc1f4f3f513d9aac1e840eb1cc341a0fccb01171f7d14d10b946"
 [[package]]
 name = "eframe"
 version = "0.17.0"
-source = "git+https://github.com/dusterthefirst/egui?branch=remove-deadlock#7e820d9da3e16f79a463cf8ba8314868e39ba604"
+source = "git+https://github.com/emilk/egui?rev=bcddafb50544ad42ac0b4a26795e8620cae94e64#bcddafb50544ad42ac0b4a26795e8620cae94e64"
 dependencies = [
  "egui",
  "egui-winit",
@@ -902,7 +902,7 @@ dependencies = [
 [[package]]
 name = "egui"
 version = "0.17.0"
-source = "git+https://github.com/dusterthefirst/egui?branch=remove-deadlock#7e820d9da3e16f79a463cf8ba8314868e39ba604"
+source = "git+https://github.com/emilk/egui?rev=bcddafb50544ad42ac0b4a26795e8620cae94e64#bcddafb50544ad42ac0b4a26795e8620cae94e64"
 dependencies = [
  "ahash 0.7.6",
  "epaint",
@@ -915,7 +915,7 @@ dependencies = [
 [[package]]
 name = "egui-winit"
 version = "0.17.0"
-source = "git+https://github.com/dusterthefirst/egui?branch=remove-deadlock#7e820d9da3e16f79a463cf8ba8314868e39ba604"
+source = "git+https://github.com/emilk/egui?rev=bcddafb50544ad42ac0b4a26795e8620cae94e64#bcddafb50544ad42ac0b4a26795e8620cae94e64"
 dependencies = [
  "copypasta",
  "dark-light",
@@ -932,7 +932,7 @@ dependencies = [
 [[package]]
 name = "egui_glow"
 version = "0.17.0"
-source = "git+https://github.com/dusterthefirst/egui?branch=remove-deadlock#7e820d9da3e16f79a463cf8ba8314868e39ba604"
+source = "git+https://github.com/emilk/egui?rev=bcddafb50544ad42ac0b4a26795e8620cae94e64#bcddafb50544ad42ac0b4a26795e8620cae94e64"
 dependencies = [
  "bytemuck",
  "egui",
@@ -941,7 +941,6 @@ dependencies = [
  "glow",
  "glutin",
  "memoffset",
- "parking_lot 0.12.0",
  "tracing",
  "wasm-bindgen",
  "web-sys",
@@ -950,7 +949,7 @@ dependencies = [
 [[package]]
 name = "egui_web"
 version = "0.17.0"
-source = "git+https://github.com/dusterthefirst/egui?branch=remove-deadlock#7e820d9da3e16f79a463cf8ba8314868e39ba604"
+source = "git+https://github.com/emilk/egui?rev=bcddafb50544ad42ac0b4a26795e8620cae94e64#bcddafb50544ad42ac0b4a26795e8620cae94e64"
 dependencies = [
  "bytemuck",
  "egui",
@@ -967,7 +966,7 @@ dependencies = [
 [[package]]
 name = "emath"
 version = "0.17.0"
-source = "git+https://github.com/dusterthefirst/egui?branch=remove-deadlock#7e820d9da3e16f79a463cf8ba8314868e39ba604"
+source = "git+https://github.com/emilk/egui?rev=bcddafb50544ad42ac0b4a26795e8620cae94e64#bcddafb50544ad42ac0b4a26795e8620cae94e64"
 dependencies = [
  "bytemuck",
  "serde",
@@ -1006,7 +1005,7 @@ dependencies = [
 [[package]]
 name = "epaint"
 version = "0.17.0"
-source = "git+https://github.com/dusterthefirst/egui?branch=remove-deadlock#7e820d9da3e16f79a463cf8ba8314868e39ba604"
+source = "git+https://github.com/emilk/egui?rev=bcddafb50544ad42ac0b4a26795e8620cae94e64#bcddafb50544ad42ac0b4a26795e8620cae94e64"
 dependencies = [
  "ab_glyph",
  "ahash 0.7.6",
@@ -1021,7 +1020,7 @@ dependencies = [
 [[package]]
 name = "epi"
 version = "0.17.0"
-source = "git+https://github.com/dusterthefirst/egui?branch=remove-deadlock#7e820d9da3e16f79a463cf8ba8314868e39ba604"
+source = "git+https://github.com/emilk/egui?rev=bcddafb50544ad42ac0b4a26795e8620cae94e64#bcddafb50544ad42ac0b4a26795e8620cae94e64"
 dependencies = [
  "directories-next",
  "egui",
@@ -2173,7 +2172,6 @@ dependencies = [
  "audio",
  "color-eyre",
  "eframe",
- "epaint",
  "flume",
  "futures-lite",
  "midir",

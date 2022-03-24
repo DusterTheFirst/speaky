@@ -46,6 +46,8 @@ pub struct Application {
     key_height: f32,
     preference: Accidental,
 
+    threshold: f32,
+
     // TODO: parking lot?
     notes: Arc<RwLock<Option<BTreeMap<PianoKey, KeyPresses>>>>,
     spectrum: Arc<RwLock<Option<TextureHandle>>>,
@@ -76,6 +78,8 @@ impl Application {
             key_height: 10.0,
             preference: Accidental::Flat,
 
+            threshold: 100.0,
+
             notes: Arc::new(RwLock::new(Some(
                 PianoKey::all()
                     .enumerate()
@@ -86,11 +90,12 @@ impl Application {
                         (
                             key,
                             KeyPresses::from([
-                                KeyPress::new(spacing * index as u64, duration),
-                                KeyPress::new(spacing * 10, duration),
+                                KeyPress::new(spacing * index as u64, duration, 1.0),
+                                KeyPress::new(spacing * 10, duration, 2.0),
                                 KeyPress::new(
                                     spacing * (PianoKey::all().len() - index) as u64,
                                     duration,
+                                    0.5,
                                 ),
                             ]),
                         )
@@ -146,6 +151,7 @@ impl Application {
         let notes = self.notes.clone();
 
         let preference = self.preference;
+        let threshold = self.threshold;
 
         thread::Builder::new()
             .name("file-decode-analysis".to_string())
@@ -261,7 +267,7 @@ impl Application {
                         let spectrum = waveform.spectrum(spectrum::Window::Hann, FFT_WIDTH);
 
                         let width = image.width();
-                        let mut max = None;
+                        // let mut max = None;
                         for (pixel, (bucket, amplitude)) in image.pixels[i..]
                             .iter_mut()
                             .step_by(width)
@@ -269,34 +275,50 @@ impl Application {
                         {
                             *pixel = (u8::MAX as f32 * amplitude).round() as u8;
 
-                            let max = max.get_or_insert((bucket, amplitude));
-                            if amplitude > max.1 {
-                                *max = (bucket, amplitude)
+                            // let max = max.get_or_insert((bucket, amplitude));
+                            // if amplitude > max.1 {
+                            //     *max = (bucket, amplitude)
+                            // }
+
+                            if amplitude < threshold {
+                                continue;
                             }
-                        }
 
-                        let dominant = max.map(|(bucket, amplitude)| {
                             let frequency = spectrum.freq_from_bucket(bucket) as f32;
+                            let key = PianoKey::from_concert_pitch(frequency);
 
-                            (
-                                PianoKey::from_concert_pitch(frequency),
-                                frequency,
-                                amplitude,
-                            )
-                        });
-
-                        if let Some((key, frequency, amplitude)) = dominant {
                             if let Some(key) = key {
-                                // TODO: encode confidence
                                 keys.entry(key).or_default().add(KeyPress::new(
                                     (i as f64 * seconds_per_window * 1000.0).round() as u64,
                                     KeyDuration::from_secs_f64(seconds_per_window),
-                                ))
-                            } else {
-                                // TODO:
-                                dbg!(frequency, amplitude);
+                                    amplitude,
+                                ));
                             }
                         }
+
+                        // let dominant = max.map(|(bucket, amplitude)| {
+                        //     let frequency = spectrum.freq_from_bucket(bucket) as f32;
+
+                        //     (
+                        //         PianoKey::from_concert_pitch(frequency),
+                        //         frequency,
+                        //         amplitude,
+                        //     )
+                        // });
+
+                        // if let Some((key, frequency, amplitude)) = dominant {
+                        //     if let Some(key) = key {
+                        //         // TODO: encode confidence
+                        //         keys.entry(key).or_default().add(KeyPress::new(
+                        //             (i as f64 * seconds_per_window * 1000.0).round() as u64,
+                        //             KeyDuration::from_secs_f64(seconds_per_window),
+                        //             amplitude,
+                        //         ))
+                        //     } else {
+                        //         // TODO:
+                        //         dbg!(frequency, amplitude);
+                        //     }
+                        // }
                     }
 
                     audio_analysis.store(AudioStep::GeneratingSpectrogram, Ordering::SeqCst);
@@ -511,10 +533,13 @@ impl App for Application {
                     &btree
                 };
 
-                // TODO: prevent clicks while playing
-                if ui.button("Play Notes").clicked() {
-                    self.midi.play_song(notes);
-                }
+                ui.horizontal(|ui| {
+                    // TODO: prevent clicks while playing
+                    if ui.button("Play Notes").clicked() {
+                        self.midi.play_song(notes);
+                    }
+                    ui.add(Slider::new(&mut self.threshold, 0.0..=1000.0).text("Note threshold"));
+                });
 
                 ui.separator();
 
