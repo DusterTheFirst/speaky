@@ -1,8 +1,6 @@
 use std::{
-    collections::BTreeMap,
-    pin::Pin,
+    collections::{BTreeMap, HashSet},
     sync::Arc,
-    task::{Context, Poll},
     thread,
     time::{Duration, Instant},
 };
@@ -10,11 +8,14 @@ use std::{
 use async_executor::Executor;
 use async_io::Timer;
 use flume::{Receiver, RecvError, Sender};
-use futures_lite::{future, Future};
+use futures_lite::future;
 use midir::{MidiOutput, MidiOutputConnection};
 use tracing::{debug, info};
 
-use crate::{key::PianoKey, piano_roll::KeyPresses};
+use crate::{
+    key::PianoKey,
+    piano_roll::{KeyPress, KeyPresses},
+};
 
 pub struct MidiPlayer {
     sender: Sender<MidiThreadCommand>,
@@ -26,34 +27,6 @@ pub enum MidiConnection {
     Connected { connection: MidiOutputConnection },
 }
 
-/// Future that will poll a [`Vec`] of futures in order
-struct Race<O> {
-    futures: Vec<Pin<Box<dyn Future<Output = O> + Send>>>,
-}
-
-impl<O> Race<O> {
-    pub fn new(futures: impl IntoIterator<Item = Pin<Box<dyn Future<Output = O> + Send>>>) -> Self {
-        Self {
-            futures: futures.into_iter().collect(),
-        }
-    }
-}
-
-impl<O> Future for Race<O> {
-    type Output = O;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        for future in &mut self.futures {
-            match Future::poll(future.as_mut(), cx) {
-                Poll::Ready(val) => return Poll::Ready(val),
-                Poll::Pending => continue,
-            }
-        }
-
-        Poll::Pending
-    }
-}
-
 impl MidiPlayer {
     const CONN_NAME: &'static str = "piano-roll";
 
@@ -61,7 +34,7 @@ impl MidiPlayer {
         let midi_output = MidiOutput::new(name).expect("unable to enumerate midi devices");
 
         // TODO: expose and implement selection
-        let mut connection = match midi_output.ports().as_slice() {
+        let connection = match midi_output.ports().as_slice() {
             // Connect if there is only one port available
             [port] => {
                 let port_name = midi_output.port_name(port).unwrap();
@@ -76,29 +49,6 @@ impl MidiPlayer {
                 output: midi_output,
             },
         };
-
-        // FIXME: TEMP
-        {
-            if let MidiConnection::Connected { connection } = &mut connection {
-                connection
-                    .send(&MidiCommand::AllSoundOff.to_bytes())
-                    .unwrap();
-                thread::sleep(Duration::from_secs_f32(0.1));
-                connection
-                    .send(
-                        &MidiCommand::NoteOn(
-                            MidiNote::from_piano_key(PianoKey::from_concert_pitch(440.0).unwrap()),
-                            120,
-                        )
-                        .to_bytes(),
-                    )
-                    .unwrap();
-                thread::sleep(Duration::from_secs_f32(0.5));
-                connection
-                    .send(&MidiCommand::PitchBendChange(0x2000 + 100).to_bytes())
-                    .unwrap();
-            }
-        }
 
         let (sender, recv) = flume::unbounded();
 
@@ -130,41 +80,34 @@ impl MidiPlayer {
     }
 
     pub fn play_song(&self, notes: &BTreeMap<PianoKey, KeyPresses>) {
-        use futures_lite::prelude::*;
-
-        let start = Instant::now();
+        let song_start = Instant::now();
         let sender = self.sender.clone();
-        let mut notes = notes.clone();
+
+        let mut deadlines = BTreeMap::<Instant, Vec<(PianoKey, KeyPress)>>::new();
+        for (key, key_presses) in notes {
+            for key_press in key_presses.iter() {
+                deadlines
+                    .entry(song_start + Duration::from_secs_f32(key_press.start_secs()))
+                    .or_default()
+                    .push((*key, key_press))
+            }
+        }
 
         self.executor
             .spawn(async move {
-                loop {
-                    let timers = Race::new(notes.iter().flat_map(|(&key, key_presses)| {
-                        key_presses.iter().map(move |keypress| {
-                            async move {
-                                Timer::at(start + Duration::from_secs_f32(keypress.start_secs()))
-                                    .await;
+                while let Some((&deadline, keys)) = deadlines.iter().next() {
+                    Timer::at(deadline).await;
 
-                                Some((key, keypress))
-                            }
-                            .boxed()
-                        })
-                    }));
-
-                    // TODO: merge and send keys together if they have the same deadline
-                    match timers.await {
-                        Some((key, duration)) => {
-                            sender
-                                .send(MidiThreadCommand::PlayNote(
-                                    MidiNote::from_piano_key(key),
-                                    duration.duration(),
-                                ))
-                                .unwrap();
-
-                            notes.entry(key).or_default().remove(&duration);
-                        }
-                        None => break,
+                    for (key, key_press) in keys {
+                        sender
+                            .send(MidiThreadCommand::PlayNote(
+                                MidiNote::from_piano_key(*key),
+                                key_press.duration(),
+                            ))
+                            .unwrap();
                     }
+
+                    deadlines.remove(&deadline);
                 }
             })
             .detach();
@@ -178,21 +121,23 @@ async fn midi_thread(mut connection: MidiConnection, thread_commands: Receiver<M
     enum MidiAction {
         ChannelClosed,
         NewCommand(MidiThreadCommand),
-        TimerWake(MidiNote),
+        NoteOffWake(Instant, HashSet<MidiNote>),
     }
 
-    let mut note_off = BTreeMap::<MidiNote, Instant>::new();
+    let mut note_off_deadlines = BTreeMap::<Instant, HashSet<MidiNote>>::new();
 
     loop {
-        // Create future that will poll all timers
-        let notes_off_fut = Race::new(note_off.iter().map(|(&note, &deadline)| {
-            async move {
-                Timer::at(deadline).await;
+        let first_deadline = note_off_deadlines.iter().next();
+        let deadline_timer = first_deadline
+            .map(|(&deadline, notes)| {
+                async move {
+                    Timer::at(deadline).await;
 
-                MidiAction::TimerWake(note)
-            }
-            .boxed()
-        }));
+                    MidiAction::NoteOffWake(deadline, notes.clone())
+                }
+                .boxed()
+            })
+            .unwrap_or_else(|| future::pending().boxed());
 
         // Create future that will accept incoming commands
         let commands_fut = async {
@@ -203,7 +148,7 @@ async fn midi_thread(mut connection: MidiConnection, thread_commands: Receiver<M
         };
 
         // Poll both futures
-        match future::or(commands_fut, notes_off_fut).await {
+        match future::or(commands_fut, deadline_timer).await {
             MidiAction::ChannelClosed => return,
             MidiAction::NewCommand(MidiThreadCommand::PlayNote(note, duration)) => {
                 match &mut connection {
@@ -217,23 +162,31 @@ async fn midi_thread(mut connection: MidiConnection, thread_commands: Receiver<M
 
                         let deadline = Instant::now() + duration;
 
-                        // Queue command
-                        let pre_instant = note_off.entry(note).or_insert(deadline);
+                        // Add the key to the deadlines
+                        note_off_deadlines.entry(deadline).or_default().insert(note);
 
-                        *pre_instant = deadline.max(*pre_instant);
+                        // Remove any previous deadlines
+                        if let Some((&instant, _)) = note_off_deadlines
+                            .range(..deadline)
+                            .find(|(_, notes)| notes.contains(&note))
+                        {
+                            note_off_deadlines.entry(instant).or_default().remove(&note);
+                        }
                     }
                 }
             }
-            MidiAction::TimerWake(note) => match &mut connection {
+            MidiAction::NoteOffWake(deadline, notes) => match &mut connection {
                 MidiConnection::Disconnected { .. } => {
-                    info!(?note, "Midi disconnected.. ignoring note off");
+                    info!(?notes, "Midi disconnected.. ignoring note off");
                 }
                 MidiConnection::Connected { connection } => {
-                    note_off.remove(&note);
+                    note_off_deadlines.remove(&deadline);
 
-                    connection
-                        .send(MidiCommand::NoteOff(note, 0b01111111).to_bytes().as_slice())
-                        .unwrap();
+                    for note in notes {
+                        connection
+                            .send(MidiCommand::NoteOff(note, 0b01111111).to_bytes().as_slice())
+                            .unwrap();
+                    }
                 }
             },
         }

@@ -106,8 +106,6 @@ impl Application {
     }
 
     fn open_file(&mut self, path: PathBuf, ctx: Context) {
-        // TODO: ERROR MESSAGES
-
         if let Err(error) = self.open_file_inner(path, ctx) {
             self.previous_error = Some(error);
         }

@@ -114,11 +114,16 @@ impl KeyPresses {
             .map(|(&start, &info)| KeyPress { start, info })
     }
 
+    pub fn first(&self) -> Option<KeyPress> {
+        self.iter().next()
+    }
+
     pub fn last(&self) -> Option<KeyPress> {
         self.iter().next_back()
     }
 
     // FIXME: what do about intensity
+    // FIXME: do at analysis time?
     pub fn add(&mut self, mut keypress: KeyPress) {
         // Join with the note before this
         if let Some((
