@@ -194,7 +194,7 @@ impl App for Application {
         false
     }
 
-    fn update(&mut self, ctx: &Context, frame: &Frame) {
+    fn update(&mut self, ctx: &Context, frame: &mut Frame) {
         TopBottomPanel::top("nav_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 eframe::egui::widgets::global_dark_light_mode_switch(ui);

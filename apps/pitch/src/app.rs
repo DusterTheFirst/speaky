@@ -1,6 +1,5 @@
 use std::{
     collections::BTreeMap,
-    fs::File,
     ops::Deref,
     path::PathBuf,
     sync::{atomic::Ordering, Arc},
@@ -9,25 +8,25 @@ use std::{
 };
 
 use atomic::Atomic;
-use audio::waveform::Waveform;
 use eframe::{
     egui::{
         Button, CentralPanel, Context, Grid, Layout, ProgressBar, ScrollArea, Slider, TextFormat,
         TopBottomPanel, Ui, Window,
     },
     emath::{Align, Align2},
-    epaint::{text::LayoutJob, AlphaImage, Color32, TextureHandle, Vec2},
+    epaint::{text::LayoutJob, Color32, TextureHandle, Vec2},
     epi::{self, App, Storage, APP_KEY},
 };
 use parking_lot::{RwLock, RwLockReadGuard};
 use ritelinked::LinkedHashSet;
-use spectrum::WaveformSpectrum;
+use static_assertions::const_assert;
 
 use crate::{
+    analysis::analyze,
     decode::AudioDecoder,
     key::{Accidental, PianoKey},
     midi::MidiPlayer,
-    piano_roll::{KeyDuration, KeyPress, KeyPresses, PianoRoll},
+    piano_roll::{KeyPress, KeyPresses, PianoRoll},
     ui_error::UiError,
 };
 
@@ -44,7 +43,7 @@ pub struct Application {
     // TODO: parking lot?
     notes: Arc<RwLock<Option<BTreeMap<PianoKey, KeyPresses>>>>,
     spectrum: Arc<RwLock<Option<TextureHandle>>>,
-    audio_analysis: Arc<Atomic<AudioStep>>,
+    audio_analysis: Arc<Atomic<AudioProgress>>,
 
     midi: MidiPlayer,
 
@@ -54,17 +53,18 @@ pub struct Application {
 
 #[derive(Debug, Clone, Copy)]
 #[repr(align(8))] // Allow native atomic instructions
-pub enum AudioStep {
+pub enum AudioProgress {
     None,
     Decoding(f32),
     Analyzing(f32),
     GeneratingSpectrogram,
 }
 
+// Ensure that native atomic instructions are being used
+const_assert!(Atomic::<AudioProgress>::is_lock_free());
+
 impl Application {
     pub fn new(recently_opened_files: LinkedHashSet<PathBuf>) -> Self {
-        assert!(Atomic::<AudioStep>::is_lock_free());
-
         Self {
             previous_error: None,
 
@@ -101,7 +101,7 @@ impl Application {
                     .collect(),
             ))),
             spectrum: Default::default(),
-            audio_analysis: Arc::new(Atomic::new(AudioStep::None)),
+            audio_analysis: Arc::new(Atomic::new(AudioProgress::None)),
         }
     }
 
@@ -121,101 +121,27 @@ impl Application {
         let spectrum = self.spectrum.clone();
         let notes = self.notes.clone();
 
-        let preference = self.preference;
         let threshold = self.threshold;
 
         thread::Builder::new()
             .name("file-decode-analysis".to_string())
             .spawn(move || {
-                audio_analysis.store(AudioStep::Decoding(0.0), Ordering::SeqCst);
+                audio_analysis.store(AudioProgress::Decoding(0.0), Ordering::SeqCst);
 
                 let waveform = decoder.decode(&|progress| {
-                    audio_analysis.store(AudioStep::Decoding(progress), Ordering::SeqCst);
+                    audio_analysis.store(AudioProgress::Decoding(progress), Ordering::SeqCst);
                     ctx.request_repaint();
                 });
 
-                audio_analysis.store(AudioStep::Analyzing(0.0), Ordering::SeqCst);
+                audio_analysis.store(AudioProgress::Analyzing(0.0), Ordering::SeqCst);
                 ctx.request_repaint();
 
-                const FFT_WIDTH: usize = 8192;
-                const WINDOW_WIDTH: usize = FFT_WIDTH / 2;
-
-                let windows = (0..waveform.len() - WINDOW_WIDTH)
-                    .step_by(WINDOW_WIDTH)
-                    .map(|start| start..start + WINDOW_WIDTH);
-                let window_count = dbg!(windows.len());
-
-                let seconds_per_window = WINDOW_WIDTH as f64 / waveform.sample_rate() as f64;
-
-                let mut image = AlphaImage::new([window_count, FFT_WIDTH / 2]);
-                let mut keys = BTreeMap::<PianoKey, KeyPresses>::new();
-
-                for (i, window) in windows.enumerate() {
-                    audio_analysis.store(
-                        AudioStep::Analyzing(i as f32 / image.width() as f32),
-                        Ordering::SeqCst,
-                    );
+                let (keys, image) = analyze(waveform, threshold, &|progress| {
+                    audio_analysis.store(AudioProgress::Analyzing(progress), Ordering::SeqCst);
                     ctx.request_repaint();
+                });
 
-                    let waveform = waveform.slice(window);
-                    let spectrum = waveform.spectrum(spectrum::Window::Hann, FFT_WIDTH);
-
-                    let width = image.width();
-                    // let mut max = None;
-                    for (pixel, (bucket, amplitude)) in image.pixels[i..]
-                        .iter_mut()
-                        .step_by(width)
-                        .zip(spectrum.amplitudes_real().enumerate())
-                    {
-                        *pixel = (u8::MAX as f32 * amplitude).round() as u8;
-
-                        // let max = max.get_or_insert((bucket, amplitude));
-                        // if amplitude > max.1 {
-                        //     *max = (bucket, amplitude)
-                        // }
-
-                        if amplitude < threshold {
-                            continue;
-                        }
-
-                        let frequency = spectrum.freq_from_bucket(bucket) as f32;
-                        let key = PianoKey::from_concert_pitch(frequency);
-
-                        if let Some(key) = key {
-                            keys.entry(key).or_default().add(KeyPress::new(
-                                (i as f64 * seconds_per_window * 1000.0).round() as u64,
-                                KeyDuration::from_secs_f64(seconds_per_window),
-                                amplitude,
-                            ));
-                        }
-                    }
-
-                    // let dominant = max.map(|(bucket, amplitude)| {
-                    //     let frequency = spectrum.freq_from_bucket(bucket) as f32;
-
-                    //     (
-                    //         PianoKey::from_concert_pitch(frequency),
-                    //         frequency,
-                    //         amplitude,
-                    //     )
-                    // });
-
-                    // if let Some((key, frequency, amplitude)) = dominant {
-                    //     if let Some(key) = key {
-                    //         // TODO: encode confidence
-                    //         keys.entry(key).or_default().add(KeyPress::new(
-                    //             (i as f64 * seconds_per_window * 1000.0).round() as u64,
-                    //             KeyDuration::from_secs_f64(seconds_per_window),
-                    //             amplitude,
-                    //         ))
-                    //     } else {
-                    //         // TODO:
-                    //         dbg!(frequency, amplitude);
-                    //     }
-                    // }
-                }
-
-                audio_analysis.store(AudioStep::GeneratingSpectrogram, Ordering::SeqCst);
+                audio_analysis.store(AudioProgress::GeneratingSpectrogram, Ordering::SeqCst);
                 ctx.request_repaint();
                 // FIXME: is the above code useful? the context stays locked the whole time the
                 // image is loaded, so unless we inject an artificial delay here the context will
@@ -228,7 +154,7 @@ impl Application {
 
                 *spectrum.write() = Some(ctx.load_texture("fft-spectrum", image));
 
-                audio_analysis.store(AudioStep::None, Ordering::SeqCst);
+                audio_analysis.store(AudioProgress::None, Ordering::SeqCst);
                 ctx.request_repaint();
             })
             .expect("unable to spawn decode thread");
@@ -284,7 +210,7 @@ impl Application {
 }
 
 impl App for Application {
-    fn update(&mut self, ctx: &Context, _frame: &epi::Frame) {
+    fn update(&mut self, ctx: &Context, _frame: &mut epi::Frame) {
         if let Some(error) = self.previous_error.take() {
             Window::new("Error")
                 .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
@@ -309,11 +235,11 @@ impl App for Application {
 
         {
             let analysis = match self.audio_analysis.load(Ordering::SeqCst) {
-                AudioStep::None => None,
-                AudioStep::Decoding(progress) => Some(("Decoding", progress)),
-                AudioStep::Analyzing(progress) => Some(("Analyzing", progress)),
+                AudioProgress::None => None,
+                AudioProgress::Decoding(progress) => Some(("Decoding", progress)),
+                AudioProgress::Analyzing(progress) => Some(("Analyzing", progress)),
                 // TODO: Better display for this
-                AudioStep::GeneratingSpectrogram => Some(("Generating Spectrogram", 0.5)),
+                AudioProgress::GeneratingSpectrogram => Some(("Generating Spectrogram", 0.5)),
             };
 
             if let Some((step, progress)) = analysis {

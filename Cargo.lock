@@ -890,7 +890,7 @@ checksum = "6907e25393cdcc1f4f3f513d9aac1e840eb1cc341a0fccb01171f7d14d10b946"
 [[package]]
 name = "eframe"
 version = "0.17.0"
-source = "git+https://github.com/emilk/egui?rev=bcddafb50544ad42ac0b4a26795e8620cae94e64#bcddafb50544ad42ac0b4a26795e8620cae94e64"
+source = "git+https://github.com/emilk/egui?rev=c3ac340e25c89a866bb64d0f46517e8e7ea2101b#c3ac340e25c89a866bb64d0f46517e8e7ea2101b"
 dependencies = [
  "egui",
  "egui-winit",
@@ -902,7 +902,7 @@ dependencies = [
 [[package]]
 name = "egui"
 version = "0.17.0"
-source = "git+https://github.com/emilk/egui?rev=bcddafb50544ad42ac0b4a26795e8620cae94e64#bcddafb50544ad42ac0b4a26795e8620cae94e64"
+source = "git+https://github.com/emilk/egui?rev=c3ac340e25c89a866bb64d0f46517e8e7ea2101b#c3ac340e25c89a866bb64d0f46517e8e7ea2101b"
 dependencies = [
  "ahash 0.7.6",
  "epaint",
@@ -915,7 +915,7 @@ dependencies = [
 [[package]]
 name = "egui-winit"
 version = "0.17.0"
-source = "git+https://github.com/emilk/egui?rev=bcddafb50544ad42ac0b4a26795e8620cae94e64#bcddafb50544ad42ac0b4a26795e8620cae94e64"
+source = "git+https://github.com/emilk/egui?rev=c3ac340e25c89a866bb64d0f46517e8e7ea2101b#c3ac340e25c89a866bb64d0f46517e8e7ea2101b"
 dependencies = [
  "copypasta",
  "dark-light",
@@ -932,7 +932,7 @@ dependencies = [
 [[package]]
 name = "egui_glow"
 version = "0.17.0"
-source = "git+https://github.com/emilk/egui?rev=bcddafb50544ad42ac0b4a26795e8620cae94e64#bcddafb50544ad42ac0b4a26795e8620cae94e64"
+source = "git+https://github.com/emilk/egui?rev=c3ac340e25c89a866bb64d0f46517e8e7ea2101b#c3ac340e25c89a866bb64d0f46517e8e7ea2101b"
 dependencies = [
  "bytemuck",
  "egui",
@@ -949,7 +949,7 @@ dependencies = [
 [[package]]
 name = "egui_web"
 version = "0.17.0"
-source = "git+https://github.com/emilk/egui?rev=bcddafb50544ad42ac0b4a26795e8620cae94e64#bcddafb50544ad42ac0b4a26795e8620cae94e64"
+source = "git+https://github.com/emilk/egui?rev=c3ac340e25c89a866bb64d0f46517e8e7ea2101b#c3ac340e25c89a866bb64d0f46517e8e7ea2101b"
 dependencies = [
  "bytemuck",
  "egui",
@@ -966,7 +966,7 @@ dependencies = [
 [[package]]
 name = "emath"
 version = "0.17.0"
-source = "git+https://github.com/emilk/egui?rev=bcddafb50544ad42ac0b4a26795e8620cae94e64#bcddafb50544ad42ac0b4a26795e8620cae94e64"
+source = "git+https://github.com/emilk/egui?rev=c3ac340e25c89a866bb64d0f46517e8e7ea2101b#c3ac340e25c89a866bb64d0f46517e8e7ea2101b"
 dependencies = [
  "bytemuck",
  "serde",
@@ -1005,7 +1005,7 @@ dependencies = [
 [[package]]
 name = "epaint"
 version = "0.17.0"
-source = "git+https://github.com/emilk/egui?rev=bcddafb50544ad42ac0b4a26795e8620cae94e64#bcddafb50544ad42ac0b4a26795e8620cae94e64"
+source = "git+https://github.com/emilk/egui?rev=c3ac340e25c89a866bb64d0f46517e8e7ea2101b#c3ac340e25c89a866bb64d0f46517e8e7ea2101b"
 dependencies = [
  "ab_glyph",
  "ahash 0.7.6",
@@ -1020,7 +1020,7 @@ dependencies = [
 [[package]]
 name = "epi"
 version = "0.17.0"
-source = "git+https://github.com/emilk/egui?rev=bcddafb50544ad42ac0b4a26795e8620cae94e64#bcddafb50544ad42ac0b4a26795e8620cae94e64"
+source = "git+https://github.com/emilk/egui?rev=c3ac340e25c89a866bb64d0f46517e8e7ea2101b#c3ac340e25c89a866bb64d0f46517e8e7ea2101b"
 dependencies = [
  "directories-next",
  "egui",
@@ -1054,12 +1054,6 @@ checksum = "c3fcf0cee53519c866c09b5de1f6c56ff9d647101f81c1964fa632e148896cdf"
 dependencies = [
  "instant",
 ]
-
-[[package]]
-name = "fixedbitset"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37ab347416e802de484e4d03c7316c48f1ecb56574dfd4a46a80f173ce1de04d"
 
 [[package]]
 name = "flume"
@@ -1423,16 +1417,6 @@ name = "indenter"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce23b50ad8242c51a442f3ff322d56b02f08852c77e4c0b4d3fd684abc89c683"
-
-[[package]]
-name = "indexmap"
-version = "1.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "282a6247722caba404c065016bbfa522806e51714c34f5dfc3e4a3a46fcb4223"
-dependencies = [
- "autocfg",
- "hashbrown 0.11.2",
-]
 
 [[package]]
 name = "instant"
@@ -2092,13 +2076,10 @@ version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28141e0cc4143da2443301914478dc976a61ffdb3f043058310c70df2fed8954"
 dependencies = [
- "backtrace",
  "cfg-if 1.0.0",
  "libc",
- "petgraph",
  "redox_syscall",
  "smallvec",
- "thread-id",
  "windows-sys",
 ]
 
@@ -2119,16 +2100,6 @@ name = "percent-encoding"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4fd5641d01c8f18a23da7b6fe29298ff4b55afcccdf78973b24cf3175fee32e"
-
-[[package]]
-name = "petgraph"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "467d164a6de56270bd7c4d070df81d07beace25012d5103ced4e9ff08d6afdb7"
-dependencies = [
- "fixedbitset",
- "indexmap",
-]
 
 [[package]]
 name = "pin-project"
@@ -2179,6 +2150,7 @@ dependencies = [
  "rfd",
  "ritelinked",
  "spectrum",
+ "static_assertions",
  "symphonia",
  "tracing",
  "util",
@@ -2837,17 +2809,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "thread-id"
-version = "4.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fdfe0627923f7411a43ec9ec9c39c3a9b4151be313e0922042581fb6c9b717f"
-dependencies = [
- "libc",
- "redox_syscall",
- "winapi",
 ]
 
 [[package]]
