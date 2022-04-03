@@ -10,7 +10,7 @@ use crate::{
 };
 
 pub fn analyze(
-    waveform: Waveform<'static>,
+    waveform: &Waveform,
     threshold: f32,
     progress_callback: &dyn Fn(f32),
 ) -> (BTreeMap<PianoKey, KeyPresses>, ColorImage) {

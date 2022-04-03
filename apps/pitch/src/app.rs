@@ -1,6 +1,5 @@
 use std::{
     collections::BTreeMap,
-    ops::Deref,
     path::PathBuf,
     sync::{atomic::Ordering, Arc},
     thread,
@@ -8,6 +7,7 @@ use std::{
 };
 
 use atomic::Atomic;
+use audio::waveform::Waveform;
 use eframe::{
     egui::{
         Button, CentralPanel, Context, Grid, Layout, ProgressBar, ScrollArea, Slider, TextFormat,
@@ -17,7 +17,7 @@ use eframe::{
     epaint::{text::LayoutJob, Color32, TextureHandle, Vec2},
     epi::{self, App, Storage, APP_KEY},
 };
-use parking_lot::{RwLock, RwLockReadGuard};
+use parking_lot::RwLock;
 use ritelinked::LinkedHashSet;
 use static_assertions::const_assert;
 
@@ -25,7 +25,7 @@ use crate::{
     analysis::analyze,
     decode::AudioDecoder,
     key::{Accidental, PianoKey},
-    midi::MidiPlayer,
+    midi::{MidiPlayer, SongProgress},
     piano_roll::{KeyPress, KeyPresses, PianoRoll},
     ui_error::UiError,
 };
@@ -40,19 +40,25 @@ pub struct Application {
 
     threshold: f32,
 
-    notes: Arc<RwLock<Option<BTreeMap<PianoKey, KeyPresses>>>>,
-    spectrum: Arc<RwLock<Option<TextureHandle>>>,
-    audio_analysis: Arc<Atomic<AudioProgress>>,
+    waveform: Arc<RwLock<Option<Waveform<'static>>>>,
+    analysis: Arc<RwLock<Option<AudioAnalysis>>>,
+    status: Arc<Atomic<TaskProgress>>,
 
     midi: MidiPlayer,
+    current_song: SongProgress,
 
     // Error reporting
     previous_error: Option<Box<dyn UiError>>,
 }
 
+struct AudioAnalysis {
+    notes: BTreeMap<PianoKey, KeyPresses>,
+    spectrum: Option<TextureHandle>,
+}
+
 #[derive(Debug, Clone, Copy)]
 #[repr(align(8))] // Allow native atomic instructions
-pub enum AudioProgress {
+pub enum TaskProgress {
     None,
     Decoding(f32),
     Analyzing(f32),
@@ -60,16 +66,38 @@ pub enum AudioProgress {
 }
 
 // Ensure that native atomic instructions are being used
-const_assert!(Atomic::<AudioProgress>::is_lock_free());
+const_assert!(Atomic::<TaskProgress>::is_lock_free());
 
 impl Application {
     pub fn new(recently_opened_files: LinkedHashSet<PathBuf>) -> Self {
+        let test_pattern = PianoKey::all()
+            .enumerate()
+            .map(|(index, key)| {
+                let duration = Duration::from_secs_f32(0.1);
+                let spacing = (0.1 * 1000.0) as u64;
+
+                (
+                    key,
+                    KeyPresses::from([
+                        KeyPress::new(spacing * index as u64, duration, 1.0),
+                        KeyPress::new(spacing * 10, duration, 2.0),
+                        KeyPress::new(
+                            spacing * (PianoKey::all().len() - index) as u64,
+                            duration,
+                            0.5,
+                        ),
+                    ]),
+                )
+            })
+            .collect();
+
         Self {
             previous_error: None,
 
             recently_opened_files,
 
             midi: MidiPlayer::new(crate::NAME),
+            current_song: SongProgress::new(),
 
             seconds_per_width: 30.0,
             key_height: 10.0,
@@ -77,30 +105,12 @@ impl Application {
 
             threshold: 100.0,
 
-            notes: Arc::new(RwLock::new(Some(
-                PianoKey::all()
-                    .enumerate()
-                    .map(|(index, key)| {
-                        let duration = Duration::from_secs_f32(0.1);
-                        let spacing = (0.1 * 1000.0) as u64;
-
-                        (
-                            key,
-                            KeyPresses::from([
-                                KeyPress::new(spacing * index as u64, duration, 1.0),
-                                KeyPress::new(spacing * 10, duration, 2.0),
-                                KeyPress::new(
-                                    spacing * (PianoKey::all().len() - index) as u64,
-                                    duration,
-                                    0.5,
-                                ),
-                            ]),
-                        )
-                    })
-                    .collect(),
-            ))),
-            spectrum: Default::default(),
-            audio_analysis: Arc::new(Atomic::new(AudioProgress::None)),
+            analysis: Arc::new(RwLock::new(Some(AudioAnalysis {
+                notes: test_pattern,
+                spectrum: None,
+            }))),
+            waveform: Default::default(),
+            status: Arc::new(Atomic::new(TaskProgress::None)),
         }
     }
 
@@ -116,57 +126,85 @@ impl Application {
         // Add to recently opened files if decoder created successfully
         self.recently_opened_files.insert(path);
 
-        let audio_analysis = self.audio_analysis.clone();
-        let spectrum = self.spectrum.clone();
-        let notes = self.notes.clone();
-
-        let threshold = self.threshold;
+        let status = self.status.clone();
+        let waveform = self.waveform.clone();
 
         thread::Builder::new()
-            .name("file-decode-analysis".to_string())
+            .name("file-decode".to_string())
             .spawn(move || {
-                audio_analysis.store(AudioProgress::Decoding(0.0), Ordering::SeqCst);
+                status.store(TaskProgress::Decoding(0.0), Ordering::SeqCst);
+                ctx.request_repaint();
 
-                let waveform = decoder.decode(&|progress| {
-                    audio_analysis.store(AudioProgress::Decoding(progress), Ordering::SeqCst);
+                let new_waveform = decoder.decode(&|progress| {
+                    status.store(TaskProgress::Decoding(progress), Ordering::SeqCst);
                     ctx.request_repaint();
                 });
 
-                audio_analysis.store(AudioProgress::Analyzing(0.0), Ordering::SeqCst);
-                ctx.request_repaint();
+                *waveform.write() = Some(new_waveform);
 
-                let (keys, image) = analyze(waveform, threshold, &|progress| {
-                    audio_analysis.store(AudioProgress::Analyzing(progress), Ordering::SeqCst);
-                    ctx.request_repaint();
-                });
-
-                audio_analysis.store(AudioProgress::GeneratingSpectrogram, Ordering::SeqCst);
-                ctx.request_repaint();
-                // FIXME: is the above code useful? the context stays locked the whole time the
-                // image is loaded, so unless we inject an artificial delay here the context will
-                // stay locked, preventing the repaint of the gui.
-
-                *notes.write() = Some(keys);
-
-                // Ensure the texture uploaded is within the size supported by the graphics driver
-                let max_texture_side = ctx.input().max_texture_side;
-                if image.width() > max_texture_side || image.height() > max_texture_side {
-                    tracing::error!(
-                        "{}x{} image has dimensions above the maximum side length of {}",
-                        image.width(),
-                        image.height(),
-                        max_texture_side
-                    )
-                } else {
-                    *spectrum.write() = Some(ctx.load_texture("fft-spectrum", image));
-                }
-
-                audio_analysis.store(AudioProgress::None, Ordering::SeqCst);
+                status.store(TaskProgress::None, Ordering::SeqCst);
                 ctx.request_repaint();
             })
             .expect("unable to spawn decode thread");
 
         Ok(())
+    }
+
+    fn analyze_waveform(&mut self, ctx: Context) {
+        let status = self.status.clone();
+        let waveform = self.waveform.clone();
+        let analysis = self.analysis.clone();
+        let threshold = self.threshold;
+
+        thread::Builder::new()
+            .name("waveform-analysis".to_string())
+            .spawn(move || {
+                status.store(TaskProgress::Analyzing(0.0), Ordering::SeqCst);
+                ctx.request_repaint();
+
+                let waveform = waveform.read();
+                let waveform = match waveform.as_ref() {
+                    Some(w) => w,
+                    None => {
+                        tracing::warn!("attempted to analyze a missing waveform");
+
+                        return;
+                    }
+                };
+
+                let (notes, image) = analyze(waveform, threshold, &|progress| {
+                    status.store(TaskProgress::Analyzing(progress), Ordering::SeqCst);
+                    ctx.request_repaint();
+                });
+
+                status.store(TaskProgress::GeneratingSpectrogram, Ordering::SeqCst);
+                ctx.request_repaint();
+                // FIXME: is the above code useful? the context stays locked the whole time the
+                // image is loaded, so unless we inject an artificial delay here the context will
+                // stay locked, preventing the repaint of the gui.
+
+                // Ensure the texture uploaded is within the size supported by the graphics driver
+                let max_texture_side = ctx.input().max_texture_side;
+                let spectrum =
+                    if image.width() > max_texture_side || image.height() > max_texture_side {
+                        tracing::error!(
+                            "{}x{} image has dimensions above the maximum side length of {}",
+                            image.width(),
+                            image.height(),
+                            max_texture_side
+                        );
+
+                        None
+                    } else {
+                        Some(ctx.load_texture("fft-spectrum", image))
+                    };
+
+                *analysis.write() = Some(AudioAnalysis { notes, spectrum });
+
+                status.store(TaskProgress::None, Ordering::SeqCst);
+                ctx.request_repaint();
+            })
+            .expect("unable to spawn analysis thread");
     }
 
     // TODO: make sexier
@@ -241,12 +279,12 @@ impl App for Application {
         }
 
         {
-            let analysis = match self.audio_analysis.load(Ordering::SeqCst) {
-                AudioProgress::None => None,
-                AudioProgress::Decoding(progress) => Some(("Decoding", progress)),
-                AudioProgress::Analyzing(progress) => Some(("Analyzing", progress)),
+            let analysis = match self.status.load(Ordering::SeqCst) {
+                TaskProgress::None => None,
+                TaskProgress::Decoding(progress) => Some(("Decoding", progress)),
+                TaskProgress::Analyzing(progress) => Some(("Analyzing", progress)),
                 // TODO: Better display for this
-                AudioProgress::GeneratingSpectrogram => Some(("Generating Spectrogram", 0.5)),
+                TaskProgress::GeneratingSpectrogram => Some(("Generating Spectrogram", 0.5)),
             };
 
             if let Some((step, progress)) = analysis {
@@ -358,45 +396,62 @@ impl App for Application {
             });
         });
 
-        // Don't block if the spectrum is being written
         if let Some(spectrum) = self
-            .spectrum
-            .try_read()
-            .and_then(|lock| RwLockReadGuard::try_map(lock, |option| option.as_ref()).ok())
+            .analysis
+            .read()
+            .as_ref()
+            .and_then(|analysis| analysis.spectrum.as_ref())
         {
             TopBottomPanel::bottom("spectrum")
                 .resizable(true)
                 .frame(eframe::egui::Frame::dark_canvas(&ctx.style()))
                 .show(ctx, |ui| {
-                    ScrollArea::both()
-                        .show(ui, |ui| ui.image(spectrum.deref(), spectrum.size_vec2()));
+                    ScrollArea::both().show(ui, |ui| ui.image(spectrum, spectrum.size_vec2()));
                 });
         }
 
         CentralPanel::default().show(ctx, |ui| {
+            if self.waveform.read().is_some() {
+                if ui.button("Analyze").clicked() {
+                    self.analyze_waveform(ui.ctx().clone());
+                }
+            }
+
             {
-                let notes = self
-                    .notes
-                    .try_read()
-                    .and_then(|lock| RwLockReadGuard::try_map(lock, |option| option.as_ref()).ok());
+                let notes = self.analysis.read();
+                let notes = notes.as_ref().map(|analysis| &analysis.notes);
 
                 ui.set_enabled(notes.is_some());
 
-                let btree = BTreeMap::new();
+                let empty_tree = BTreeMap::new();
 
-                let notes = if let Some(notes) = notes.as_ref() {
-                    notes
-                } else {
-                    &btree
-                };
+                let notes = notes.unwrap_or(&empty_tree);
 
                 ui.horizontal(|ui| {
-                    // TODO: prevent clicks while playing
-                    if ui.button("Play Notes").clicked() {
-                        self.midi.play_song(notes);
+                    match self.current_song.upgrade() {
+                        Some(progress) => {
+                            if ui.button("Stop Playing").clicked() {
+                                progress.cancel();
+                            }
+                        }
+                        None => {
+                            if ui.button("Play Notes").clicked() {
+                                self.current_song = self.midi.play_song(notes);
+                            }
+                        }
                     }
+
                     ui.add(Slider::new(&mut self.threshold, 0.0..=1000.0).text("Note threshold"));
                 });
+
+                let notes_played = self
+                    .current_song
+                    .upgrade()
+                    .map(|progress| progress.notes_played())
+                    .unwrap_or_default();
+
+                // TODO: Count total notes somehow
+                ui.label(format!("Played {} of {} notes", notes_played, notes.len()));
 
                 ui.separator();
 

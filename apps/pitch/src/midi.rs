@@ -1,12 +1,16 @@
 use std::{
     collections::{BTreeMap, HashSet},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, AtomicUsize},
+        Arc, Weak,
+    },
     thread,
     time::{Duration, Instant},
 };
 
 use async_executor::Executor;
 use async_io::Timer;
+use atomic::Ordering;
 use flume::{Receiver, RecvError, Sender};
 use futures_lite::future;
 use midir::{MidiOutput, MidiOutputConnection};
@@ -79,7 +83,8 @@ impl MidiPlayer {
             .unwrap();
     }
 
-    pub fn play_song(&self, notes: &BTreeMap<PianoKey, KeyPresses>) {
+    #[must_use]
+    pub fn play_song(&self, notes: &BTreeMap<PianoKey, KeyPresses>) -> SongProgress {
         let song_start = Instant::now();
         let sender = self.sender.clone();
 
@@ -93,10 +98,20 @@ impl MidiPlayer {
             }
         }
 
+        let progress = Arc::new(SongProgressInner {
+            notes: AtomicUsize::new(0),
+            cancel: AtomicBool::new(false),
+        });
+        let weak = Arc::downgrade(&progress);
+
         self.executor
             .spawn(async move {
                 while let Some((&deadline, keys)) = deadlines.iter().next() {
                     Timer::at(deadline).await;
+
+                    if progress.cancel.load(Ordering::SeqCst) {
+                        break;
+                    }
 
                     for (key, key_press) in keys {
                         sender
@@ -107,10 +122,31 @@ impl MidiPlayer {
                             .unwrap();
                     }
 
+                    progress.notes.fetch_add(keys.len(), Ordering::SeqCst);
+
                     deadlines.remove(&deadline);
                 }
             })
             .detach();
+
+        weak
+    }
+}
+
+pub type SongProgress = Weak<SongProgressInner>;
+
+pub struct SongProgressInner {
+    notes: AtomicUsize,
+    cancel: AtomicBool,
+}
+
+impl SongProgressInner {
+    pub fn notes_played(&self) -> usize {
+        self.notes.load(Ordering::SeqCst)
+    }
+
+    pub fn cancel(&self) {
+        self.cancel.store(true, Ordering::SeqCst);
     }
 }
 
