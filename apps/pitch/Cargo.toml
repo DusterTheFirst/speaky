@@ -8,7 +8,7 @@ color-eyre = "0.6.0"
 tracing = "0.1.31"
 
 # UI
-eframe = { version = "0.17.0", features = ["persistence"] }
+eframe = { version = "0.17.0", features = ["persistence", "dark-light"] }
 
 # File open dialog
 rfd = "0.8.0"

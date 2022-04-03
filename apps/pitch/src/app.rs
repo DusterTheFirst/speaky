@@ -11,7 +11,7 @@ use atomic::Atomic;
 use eframe::{
     egui::{
         Button, CentralPanel, Context, Grid, Layout, ProgressBar, ScrollArea, Slider, TextFormat,
-        TopBottomPanel, Ui, Window,
+        TopBottomPanel, Ui, Visuals, Window,
     },
     emath::{Align, Align2},
     epaint::{text::LayoutJob, Color32, TextureHandle, Vec2},
@@ -40,7 +40,6 @@ pub struct Application {
 
     threshold: f32,
 
-    // TODO: parking lot?
     notes: Arc<RwLock<Option<BTreeMap<PianoKey, KeyPresses>>>>,
     spectrum: Arc<RwLock<Option<TextureHandle>>>,
     audio_analysis: Arc<Atomic<AudioProgress>>,
@@ -149,10 +148,18 @@ impl Application {
 
                 *notes.write() = Some(keys);
 
-                // TODO: Check texture size
-                // ctx.input().max_texture_side
-
-                *spectrum.write() = Some(ctx.load_texture("fft-spectrum", image));
+                // Ensure the texture uploaded is within the size supported by the graphics driver
+                let max_texture_side = ctx.input().max_texture_side;
+                if image.width() > max_texture_side || image.height() > max_texture_side {
+                    tracing::error!(
+                        "{}x{} image has dimensions above the maximum side length of {}",
+                        image.width(),
+                        image.height(),
+                        max_texture_side
+                    )
+                } else {
+                    *spectrum.write() = Some(ctx.load_texture("fft-spectrum", image));
+                }
 
                 audio_analysis.store(AudioProgress::None, Ordering::SeqCst);
                 ctx.request_repaint();
@@ -339,8 +346,13 @@ impl App for Application {
                     });
 
                     ui.menu_button("Theme", |ui| {
-                        // TODO: custom
-                        eframe::egui::widgets::global_dark_light_mode_buttons(ui);
+                        // eframe::egui::widgets::global_dark_light_mode_buttons(ui)
+                        let mut visuals = ui.ctx().style().visuals.clone();
+
+                        ui.selectable_value(&mut visuals, Visuals::light(), "☀ Light");
+                        ui.selectable_value(&mut visuals, Visuals::dark(), "🌙 Dark");
+
+                        ui.ctx().set_visuals(visuals);
                     })
                 });
             });

@@ -63,30 +63,6 @@ pub fn analyze(
                 ));
             }
         }
-
-        // let dominant = max.map(|(bucket, amplitude)| {
-        //     let frequency = spectrum.freq_from_bucket(bucket) as f32;
-
-        //     (
-        //         PianoKey::from_concert_pitch(frequency),
-        //         frequency,
-        //         amplitude,
-        //     )
-        // });
-
-        // if let Some((key, frequency, amplitude)) = dominant {
-        //     if let Some(key) = key {
-        //         // TODO: encode confidence
-        //         keys.entry(key).or_default().add(KeyPress::new(
-        //             (i as f64 * seconds_per_window * 1000.0).round() as u64,
-        //             KeyDuration::from_secs_f64(seconds_per_window),
-        //             amplitude,
-        //         ))
-        //     } else {
-        //         // TODO:
-        //         dbg!(frequency, amplitude);
-        //     }
-        // }
     }
 
     (keys, image)

@@ -10,7 +10,7 @@ license = "MPL-2.0"
 color-eyre = "0.6.0"
 tracing = "0.1.31"
 
-eframe = { version = "0.17.0", features = ["persistence"] }
+eframe = { version = "0.17.0", features = ["persistence", "dark-light"] }
 snmalloc-rs = { version = "0.2.28", optional = true }
 # For WASM instant support
 instant = { version = "0.1.12", features = ["wasm-bindgen"] }

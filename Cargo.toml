@@ -16,4 +16,4 @@ debug = 1
 microfft = { git = "https://gitlab.com/teskje/microfft-rs.git", rev = "f783b1effe66a24984f46b3fccca00d18fda5970" }
 
 # eframe = { path = "../egui/eframe" }
-eframe = { git = "https://github.com/emilk/egui", rev = "c3ac340e25c89a866bb64d0f46517e8e7ea2101b" }
+eframe = { git = "https://github.com/emilk/egui", rev = "c2039920de4c4881ee04fd04658f1c086084f043" }

@@ -60,6 +60,7 @@ impl MusicalNote {
 
     /// Get the twelve tone equal temperament semitone from C0
     pub fn semitone(&self) -> u8 {
+        // TODO: https://github.com/rust-lang/rust/issues/87840
         ((self.octave * 12) as i8 + self.semitone_offset()) as u8
     }
 
@@ -68,7 +69,6 @@ impl MusicalNote {
             return None;
         }
 
-        // TODO: https://github.com/rust-lang/rust/issues/87840
         // Get semitone from C0
         let semitone = self.semitone();
 
@@ -148,11 +148,6 @@ impl Display for NoteLetter {
 pub struct PianoKey(NonZeroU8);
 
 impl PianoKey {
-    // TODO: Needed?
-    // FIXME: remove unsafe once `unwrap` is stabilized in const position
-    // pub const MAX: Self = unsafe { Self(NonZeroU8::new_unchecked(88)) };
-    // pub const MIN: Self = unsafe { Self(NonZeroU8::new_unchecked(1)) };
-
     /// All the piano keys from highest to lowest
     pub fn all() -> impl DoubleEndedIterator<Item = Self> + ExactSizeIterator<Item = Self> {
         (1..=88).rev().map(|key| PianoKey::new(key).unwrap())

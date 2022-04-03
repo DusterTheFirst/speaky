@@ -1,3 +1,7 @@
+#![deny(clippy::panic_in_result_fn)]
+#![forbid(unsafe_code)]
+// #![warn(clippy::unwrap_used, clippy::expect_used)]
+
 use color_eyre::eyre::Context;
 use eframe::{NativeOptions, APP_KEY};
 use ritelinked::LinkedHashSet;

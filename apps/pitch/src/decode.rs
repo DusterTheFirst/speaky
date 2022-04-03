@@ -93,7 +93,6 @@ pub struct AudioDecoder {
 
 impl AudioDecoder {
     // TODO: make last lint global?
-    #[forbid(clippy::unwrap_used, clippy::expect_used, clippy::panic_in_result_fn)]
     pub fn create_for_file(path: PathBuf) -> Result<(AudioDecoder, PathBuf), CreateDecoderError> {
         // Verify file
         // path.extension()

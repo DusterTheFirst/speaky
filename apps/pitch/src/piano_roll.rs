@@ -1,13 +1,15 @@
-use std::{collections::BTreeMap, ops::Deref, time::Duration};
+use std::{collections::BTreeMap, ops::Deref, sync::Arc, time::Duration};
 
 use eframe::{
     egui::{Frame, Id, Response, ScrollArea, Sense, TextFormat, Ui, Widget},
-    emath::Align2,
-    epaint::{text::LayoutJob, Color32, FontId, Pos2, Rect, Rounding, Shape, Stroke, Vec2},
+    emath::{Align, Align2},
+    epaint::{
+        text::LayoutJob, Color32, FontId, Fonts, Galley, Pos2, Rect, Rounding, Shape, Stroke, Vec2,
+    },
 };
 
 use crate::{
-    key::{Accidental, PianoKey},
+    key::{Accidental, MusicalNote, PianoKey},
     midi::MidiPlayer,
 };
 
@@ -203,13 +205,94 @@ impl<'player, 'keys> PianoRoll<'player, 'keys> {
 }
 
 impl PianoRoll<'_, '_> {
-    fn draw_key_ui<'s>(
+    fn layout_key(fonts: &Fonts, note: &MusicalNote, height: f32) -> Arc<Galley> {
+        // TODO: https://github.com/rust-lang/rust/issues/74465 memoize
+        let width = {
+            let mut job = LayoutJob::default();
+
+            job.append(
+                "m",
+                0.0,
+                TextFormat::simple(FontId::monospace(height), Color32::GRAY),
+            );
+
+            fonts.layout_job(job).rect.width()
+        };
+
+        let mut job = LayoutJob::default();
+
+        job.append(
+            &note.letter().to_string(),
+            0.0,
+            TextFormat::simple(FontId::monospace(height), Color32::GRAY),
+        );
+        let leading_space = if let Some(accidental) = note.accidental() {
+            job.append(
+                &accidental.to_string(),
+                0.0,
+                TextFormat {
+                    font_id: FontId::monospace(height / 2.0),
+                    color: Color32::GRAY,
+                    valign: Align::TOP,
+                    ..Default::default()
+                },
+            );
+            -width / 2.0
+        } else {
+            0.0
+        };
+
+        job.append(
+            &note.octave().to_string(),
+            leading_space,
+            TextFormat::simple(FontId::monospace(height / 2.0), Color32::GRAY),
+        );
+
+        fonts.layout_job(job)
+    }
+
+    fn draw_key_text_ui<'s>(
         &'s self,
         ui: &'s Ui,
         drawing_window: Rect,
+        top_margin: f32,
+        out_left_margin: &'s mut f32,
+    ) -> impl Iterator<Item = Shape> + 's {
+        PianoKey::all().enumerate().map(move |(row, key)| {
+            let y = row as f32 * self.key_height;
+            let top_left = Pos2::new(0.0, y + top_margin) + drawing_window.min.to_vec2();
+
+            let note = key.as_note(self.preference);
+
+            let (text, text_rect) = {
+                let text_galley = Self::layout_key(&ui.fonts(), &note, self.key_height);
+
+                let text_rect = Align2::LEFT_CENTER.anchor_rect(Rect::from_min_size(
+                    top_left + Vec2::new(0.0, self.key_height / 2.0),
+                    text_galley.size(),
+                ));
+
+                (Shape::galley(text_rect.min, text_galley), text_rect)
+            };
+
+            // Update the max left margin
+            *out_left_margin = out_left_margin.max(text_rect.width());
+
+            // TODO: hover/click color change somehow also play midi note pls thx
+            ui.interact(text_rect, Id::new(key), Sense::hover())
+                .on_hover_text_at_pointer(format!("Key #{}", key.number()));
+
+            // TODO: hover and click on label
+            text
+        })
+    }
+
+    fn draw_key_lines_ui(
+        &self,
+        drawing_window: Rect,
         margin: Vec2,
         size: Vec2,
-    ) -> impl Iterator<Item = Shape> + 's {
+    ) -> impl Iterator<Item = Shape> + '_ {
         PianoKey::all().enumerate().flat_map(move |(row, key)| {
             let y = row as f32 * self.key_height;
 
@@ -227,20 +310,11 @@ impl PianoRoll<'_, '_> {
                         Color32::WHITE.linear_multiply(0.05)
                     },
                 ),
-                // Shape::rect_stroke(rect, Rounding::none(), Stroke::new(1.0, Color32::WHITE)),
-                // TODO: Measure text and set margin accordingly (use galley)
-                // TODO: hover and click on number
-                Shape::text(
-                    &ui.fonts(),
-                    top_left + Vec2::new(0.0, self.key_height / 2.0),
-                    Align2::RIGHT_CENTER,
-                    format!("{:3}", key.as_note(self.preference)),
-                    FontId::monospace(self.key_height),
-                    if key.is_white() {
-                        Color32::WHITE
-                    } else {
-                        Color32::DARK_GRAY
-                    },
+                // TODO: make it look better
+                Shape::rect_stroke(
+                    rect,
+                    Rounding::same(0.0),
+                    Stroke::new(self.key_height * 0.10, Color32::BLACK),
                 ),
             ]
         })
@@ -263,7 +337,8 @@ impl PianoRoll<'_, '_> {
                         self.key_height,
                     ),
                 )
-                .translate(drawing_window.min.to_vec2() + margin);
+                .translate(drawing_window.min.to_vec2() + margin)
+                .shrink2(Vec2::new(0.0, self.key_height * 0.05));
 
                 let response = ui
                     .interact(
@@ -274,29 +349,8 @@ impl PianoRoll<'_, '_> {
                     .on_hover_ui_at_pointer(|ui| {
                         let note = key.as_note(Accidental::Sharp);
 
-                        ui.label({
-                            let mut job = LayoutJob::default();
-
-                            job.append(
-                                &note.letter().to_string(),
-                                0.0,
-                                TextFormat::simple(FontId::monospace(20.0), Color32::GRAY),
-                            );
-                            if let Some(accidental) = note.accidental() {
-                                job.append(
-                                    &accidental.to_string(),
-                                    0.0,
-                                    TextFormat::simple(FontId::monospace(20.0), Color32::GRAY),
-                                );
-                            }
-                            job.append(
-                                &note.octave().to_string(),
-                                0.0,
-                                TextFormat::simple(FontId::monospace(10.0), Color32::GRAY),
-                            );
-
-                            job
-                        });
+                        let galley = Self::layout_key(&ui.fonts(), &note, 20.0);
+                        ui.label(galley);
 
                         ui.horizontal(|ui| {
                             ui.label("Intensity: ");
@@ -337,6 +391,7 @@ impl PianoRoll<'_, '_> {
             let offset = margin + drawing_window.min.to_vec2();
 
             [
+                // TODO: fix crowding on zoom out
                 Shape::text(
                     &ui.fonts(),
                     Pos2::new(x, 0.0) + offset,
@@ -361,8 +416,6 @@ impl Widget for PianoRoll<'_, '_> {
                 ScrollArea::both().show(ui, |ui| {
                     let drawing_window = ui.available_rect_before_wrap();
 
-                    let margin = Vec2::new(30.0, 15.0);
-
                     let size = {
                         let alloc_height = (self.key_height * PianoKey::all().len() as f32)
                             .max(drawing_window.height());
@@ -381,15 +434,32 @@ impl Widget for PianoRoll<'_, '_> {
                         Vec2::new(alloc_width, alloc_height)
                     };
 
-                    ui.painter().extend({
+                    let time_text_size = 15.0;
+
+                    let (shapes, margin) = {
                         let mut shapes = Vec::new();
 
-                        shapes.extend(self.draw_key_ui(ui, drawing_window, margin, size));
+                        let mut left_margin = 0.0;
+
+                        shapes.extend(self.draw_key_text_ui(
+                            ui,
+                            drawing_window,
+                            time_text_size,
+                            &mut left_margin,
+                        ));
+
+                        // TODO: padding around text relative to text size (em)
+                        let margin = Vec2::new(left_margin + 5.0, time_text_size);
+
+                        shapes.extend(self.draw_key_lines_ui(drawing_window, margin, size));
                         shapes.extend(self.draw_time_ui(ui, drawing_window, margin, size));
+
                         shapes.extend(self.draw_notes(ui, drawing_window, margin));
 
-                        shapes
-                    });
+                        (shapes, margin)
+                    };
+
+                    ui.painter().extend(shapes);
 
                     ui.allocate_rect(
                         Rect::from_min_size(drawing_window.min, size + margin),
