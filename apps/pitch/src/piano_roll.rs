@@ -7,6 +7,7 @@ use eframe::{
         text::LayoutJob, Color32, FontId, Fonts, Galley, Pos2, Rect, Rounding, Shape, Stroke, Vec2,
     },
 };
+use once_cell::sync::OnceCell;
 
 use crate::{
     key::{Accidental, MusicalNote, PianoKey},
@@ -116,6 +117,10 @@ impl KeyPresses {
             .map(|(&start, &info)| KeyPress { start, info })
     }
 
+    pub fn len(&self) -> usize {
+        self.key_list.len()
+    }
+
     pub fn first(&self) -> Option<KeyPress> {
         self.iter().next()
     }
@@ -180,6 +185,8 @@ pub struct PianoRoll<'player, 'keys> {
     key_height: f32,
     seconds_per_width: f32, // TODO: less jank
 
+    cursor: Option<f32>,
+
     midi: &'player MidiPlayer,
 
     keys: &'keys BTreeMap<PianoKey, KeyPresses>,
@@ -190,6 +197,7 @@ impl<'player, 'keys> PianoRoll<'player, 'keys> {
     pub fn new(
         midi: &'player MidiPlayer,
         preference: Accidental,
+        cursor: Option<f32>,
         key_height: f32,
         seconds_per_width: f32,
         keys: &'keys BTreeMap<PianoKey, KeyPresses>,
@@ -200,25 +208,13 @@ impl<'player, 'keys> PianoRoll<'player, 'keys> {
             midi,
             preference,
             seconds_per_width,
+            cursor,
         }
     }
 }
 
 impl PianoRoll<'_, '_> {
     fn layout_key(fonts: &Fonts, note: &MusicalNote, height: f32) -> Arc<Galley> {
-        // TODO: https://github.com/rust-lang/rust/issues/74465 memoize
-        let width = {
-            let mut job = LayoutJob::default();
-
-            job.append(
-                "m",
-                0.0,
-                TextFormat::simple(FontId::monospace(height), Color32::GRAY),
-            );
-
-            fonts.layout_job(job).rect.width()
-        };
-
         let mut job = LayoutJob::default();
 
         job.append(
@@ -237,6 +233,20 @@ impl PianoRoll<'_, '_> {
                     ..Default::default()
                 },
             );
+
+            static WIDTH: OnceCell<f32> = OnceCell::new();
+            let width = WIDTH.get_or_init(|| {
+                let mut job = LayoutJob::default();
+
+                job.append(
+                    "m",
+                    0.0,
+                    TextFormat::simple(FontId::monospace(height), Color32::GRAY),
+                );
+
+                fonts.layout_job(job).rect.width()
+            });
+
             -width / 2.0
         } else {
             0.0
@@ -280,7 +290,14 @@ impl PianoRoll<'_, '_> {
 
             // TODO: hover/click color change somehow also play midi note pls thx
             ui.interact(text_rect, Id::new(key), Sense::hover())
-                .on_hover_text_at_pointer(format!("Key #{}", key.number()));
+                .on_hover_ui_at_pointer(|ui| {
+                    let note = key.as_note(Accidental::Sharp);
+
+                    let galley = Self::layout_key(&ui.fonts(), &note, 20.0);
+                    ui.label(galley);
+
+                    ui.label(format!("Key #{}", key.number()));
+                });
 
             // TODO: hover and click on label
             text
@@ -320,6 +337,7 @@ impl PianoRoll<'_, '_> {
         })
     }
 
+    // TODO: CULLING
     fn draw_notes<'s>(
         &'s self,
         ui: &'s Ui,
@@ -352,10 +370,13 @@ impl PianoRoll<'_, '_> {
                         let galley = Self::layout_key(&ui.fonts(), &note, 20.0);
                         ui.label(galley);
 
-                        ui.horizontal(|ui| {
-                            ui.label("Intensity: ");
-                            ui.label(keypress.intensity.to_string());
-                        });
+                        ui.label(format!(
+                            "Span: {:.2}s-{:.2}s ({:.2}s)",
+                            keypress.start_secs(),
+                            keypress.end_secs(),
+                            keypress.duration_secs()
+                        ));
+                        ui.label(format!("Intensity: {}", keypress.intensity));
                     });
 
                 if response.clicked() {
@@ -366,7 +387,9 @@ impl PianoRoll<'_, '_> {
                     Shape::rect_filled(
                         rect,
                         Rounding::same(2.0),
-                        if response.hovered() {
+                        if self.cursor >= Some(keypress.start_secs()) {
+                            Color32::GREEN
+                        } else if response.hovered() {
                             Color32::LIGHT_RED
                         } else {
                             Color32::RED
@@ -405,6 +428,20 @@ impl PianoRoll<'_, '_> {
                     Stroke::new(2.0, Color32::BLACK),
                 ),
             ]
+        })
+    }
+
+    fn draw_cursor(&self, drawing_window: Rect, margin: Vec2, size: Vec2) -> Option<Shape> {
+        self.cursor.map(|time| {
+            // TODO: extract x and y coords into own function to reduce boilerplate
+            let x = time as f32 * self.seconds_per_width;
+
+            let offset = margin + drawing_window.min.to_vec2();
+
+            Shape::line_segment(
+                [Pos2::new(x, 0.0) + offset, Pos2::new(x, size.y) + offset],
+                Stroke::new(4.0, Color32::GREEN),
+            )
         })
     }
 }
@@ -455,6 +492,7 @@ impl Widget for PianoRoll<'_, '_> {
                         shapes.extend(self.draw_time_ui(ui, drawing_window, margin, size));
 
                         shapes.extend(self.draw_notes(ui, drawing_window, margin));
+                        shapes.extend(self.draw_cursor(drawing_window, margin, size));
 
                         (shapes, margin)
                     };

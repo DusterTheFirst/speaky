@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::BTreeMap,
     path::PathBuf,
     sync::{atomic::Ordering, Arc},
@@ -10,19 +11,20 @@ use atomic::Atomic;
 use audio::waveform::Waveform;
 use eframe::{
     egui::{
-        Button, CentralPanel, Context, Grid, Layout, ProgressBar, ScrollArea, Slider, TextFormat,
-        TopBottomPanel, Ui, Visuals, Window,
+        Button, CentralPanel, CollapsingHeader, Context, Grid, InnerResponse, Layout, ProgressBar,
+        RichText, ScrollArea, Slider, TextFormat, TopBottomPanel, Ui, Visuals, Window,
     },
     emath::{Align, Align2},
     epaint::{text::LayoutJob, Color32, TextureHandle, Vec2},
     epi::{self, App, Storage, APP_KEY},
 };
-use parking_lot::RwLock;
+use once_cell::sync::Lazy;
+use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use ritelinked::LinkedHashSet;
 use static_assertions::const_assert;
 
 use crate::{
-    analysis::analyze,
+    analysis::{analyze, AnalysisOptions},
     decode::AudioDecoder,
     key::{Accidental, PianoKey},
     midi::{MidiPlayer, SongProgress},
@@ -38,10 +40,9 @@ pub struct Application {
     key_height: f32,
     preference: Accidental,
 
-    threshold: f32,
-
     waveform: Arc<RwLock<Option<Waveform<'static>>>>,
     analysis: Arc<RwLock<Option<AudioAnalysis>>>,
+    analysis_options: AnalysisOptions,
     status: Arc<Atomic<TaskProgress>>,
 
     midi: MidiPlayer,
@@ -103,8 +104,12 @@ impl Application {
             key_height: 10.0,
             preference: Accidental::Flat,
 
-            threshold: 100.0,
-
+            analysis_options: AnalysisOptions {
+                threshold: 100.0,
+                fft_width: 14,
+                window_fraction: 0.5,
+                step_fraction: 1.0,
+            },
             analysis: Arc::new(RwLock::new(Some(AudioAnalysis {
                 notes: test_pattern,
                 spectrum: None,
@@ -128,6 +133,7 @@ impl Application {
 
         let status = self.status.clone();
         let waveform = self.waveform.clone();
+        let analysis = self.analysis.clone();
 
         thread::Builder::new()
             .name("file-decode".to_string())
@@ -141,6 +147,7 @@ impl Application {
                 });
 
                 *waveform.write() = Some(new_waveform);
+                *analysis.write() = None;
 
                 status.store(TaskProgress::None, Ordering::SeqCst);
                 ctx.request_repaint();
@@ -150,11 +157,11 @@ impl Application {
         Ok(())
     }
 
-    fn analyze_waveform(&mut self, ctx: Context) {
+    fn analyze_waveform(&self, ctx: Context) {
         let status = self.status.clone();
         let waveform = self.waveform.clone();
         let analysis = self.analysis.clone();
-        let threshold = self.threshold;
+        let analysis_options = self.analysis_options;
 
         thread::Builder::new()
             .name("waveform-analysis".to_string())
@@ -172,7 +179,7 @@ impl Application {
                     }
                 };
 
-                let (notes, image) = analyze(waveform, threshold, &|progress| {
+                let (notes, image) = analyze(waveform, analysis_options, &|progress| {
                     status.store(TaskProgress::Analyzing(progress), Ordering::SeqCst);
                     ctx.request_repaint();
                 });
@@ -255,7 +262,7 @@ impl Application {
 }
 
 impl App for Application {
-    fn update(&mut self, ctx: &Context, _frame: &mut epi::Frame) {
+    fn update(&mut self, ctx: &Context, frame: &mut epi::Frame) {
         if let Some(error) = self.previous_error.take() {
             Window::new("Error")
                 .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
@@ -393,6 +400,20 @@ impl App for Application {
                         ui.ctx().set_visuals(visuals);
                     })
                 });
+
+                ui.with_layout(Layout::right_to_left(), |ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+
+                    ui.label(" ms");
+                    ui.label(
+                        RichText::new(format!(
+                            "{:.2}",
+                            frame.info().cpu_usage.unwrap_or(0.0) * 1000.0
+                        ))
+                        .monospace(),
+                    );
+                    ui.label("Last frame: ");
+                });
             });
         });
 
@@ -411,47 +432,110 @@ impl App for Application {
         }
 
         CentralPanel::default().show(ctx, |ui| {
-            if self.waveform.read().is_some() {
-                if ui.button("Analyze").clicked() {
-                    self.analyze_waveform(ui.ctx().clone());
-                }
-            }
+            let analysis = self.analysis.clone();
 
-            {
-                let notes = self.analysis.read();
-                let notes = notes.as_ref().map(|analysis| &analysis.notes);
+            let notes = ui
+                .horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.heading("Waveform");
+                        ui.set_enabled(self.waveform.read().is_some());
 
-                ui.set_enabled(notes.is_some());
+                        if ui.button("Unload").clicked() {
+                            *self.waveform.write() = None;
+                        }
+                        if ui.button("Analyze").clicked() {
+                            self.analyze_waveform(ui.ctx().clone());
+                        }
+                    });
 
-                let empty_tree = BTreeMap::new();
+                    ui.vertical(|ui| {
+                        ui.heading("Analysis Options");
 
-                let notes = notes.unwrap_or(&empty_tree);
+                        ui.set_enabled(self.waveform.read().is_some());
+                        ui.add(
+                            Slider::new(&mut self.analysis_options.fft_width, 1..=16)
+                                .text("FFT Width")
+                                .prefix("2^")
+                                .suffix(" samples"),
+                        );
+                        ui.add(
+                            Slider::new(&mut self.analysis_options.window_fraction, 0.0..=1.0)
+                                .text("Window Fraction")
+                                .logarithmic(true),
+                        );
+                        ui.add(
+                            Slider::new(&mut self.analysis_options.step_fraction, 0.0..=1.0)
+                                .text("Step Fraction")
+                                .logarithmic(true),
+                        );
 
-                ui.horizontal(|ui| {
-                    match self.current_song.upgrade() {
-                        Some(progress) => {
-                            if ui.button("Stop Playing").clicked() {
+                        ui.add(
+                            Slider::new(&mut self.analysis_options.threshold, 0.0..=1000.0)
+                                .text("Note threshold"),
+                        );
+                    });
+
+                    ui.vertical(|ui| {
+                        ui.heading("Analysis");
+
+                        let mut analysis = analysis.write();
+                        ui.set_enabled(analysis.is_some());
+
+                        if ui.button("Unload").clicked() {
+                            *analysis = None;
+                            if let Some(progress) = self.current_song.upgrade() {
                                 progress.cancel();
                             }
                         }
-                        None => {
-                            if ui.button("Play Notes").clicked() {
-                                self.current_song = self.midi.play_song(notes);
+
+                        let notes = RwLockReadGuard::map(
+                            RwLockWriteGuard::downgrade(analysis),
+                            |analysis| {
+                                static EMPTY: Lazy<BTreeMap<PianoKey, KeyPresses>> =
+                                    Lazy::new(BTreeMap::new);
+
+                                analysis
+                                    .as_ref()
+                                    .map(|analysis| &analysis.notes)
+                                    .unwrap_or(&EMPTY)
+                            },
+                        );
+
+                        ui.horizontal(|ui| match self.current_song.upgrade() {
+                            Some(progress) => {
+                                if ui.button("Stop Playing").clicked() {
+                                    progress.cancel();
+                                }
                             }
-                        }
-                    }
+                            None => {
+                                if ui.button("Play Notes").clicked() {
+                                    self.current_song = self.midi.play_song(&notes, ctx.clone());
+                                }
+                            }
+                        });
 
-                    ui.add(Slider::new(&mut self.threshold, 0.0..=1000.0).text("Note threshold"));
-                });
+                        notes
+                    })
+                    .inner
+                })
+                .inner;
 
-                let notes_played = self
-                    .current_song
-                    .upgrade()
-                    .map(|progress| progress.notes_played())
-                    .unwrap_or_default();
+            {
+                let notes_count = notes
+                    .values()
+                    .map(|key_presses| key_presses.len())
+                    .sum::<usize>();
 
-                // TODO: Count total notes somehow
-                ui.label(format!("Played {} of {} notes", notes_played, notes.len()));
+                if let Some(progress) = self.current_song.upgrade() {
+                    ui.label(format!(
+                        "Played {} of {} notes",
+                        progress.notes_played(),
+                        notes_count
+                    ));
+                    ui.label(format!("{:.2}s", progress.time()));
+                } else {
+                    ui.label(format!("Loaded {} notes", notes_count));
+                }
 
                 ui.separator();
 
@@ -470,9 +554,10 @@ impl App for Application {
                         ui.add(PianoRoll::new(
                             &self.midi,
                             self.preference,
+                            self.current_song.upgrade().map(|progress| progress.time()),
                             self.key_height,
                             self.seconds_per_width,
-                            notes,
+                            &notes,
                         ));
                     });
             }

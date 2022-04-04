@@ -9,29 +9,40 @@ use crate::{
     piano_roll::{KeyDuration, KeyPress, KeyPresses},
 };
 
+#[derive(Debug, Clone, Copy)]
+pub struct AnalysisOptions {
+    pub fft_width: u8,
+
+    pub window_fraction: f32,
+    pub step_fraction: f32,
+
+    pub threshold: f32,
+}
+
 pub fn analyze(
     waveform: &Waveform,
-    threshold: f32,
+    options: AnalysisOptions,
     progress_callback: &dyn Fn(f32),
 ) -> (BTreeMap<PianoKey, KeyPresses>, ColorImage) {
-    const FFT_WIDTH: usize = 8192;
-    const WINDOW_WIDTH: usize = FFT_WIDTH / 2;
+    let fft_width = 1 << options.fft_width;
+    let window_width = (fft_width as f32 * options.window_fraction).ceil() as usize;
+    let step = (window_width as f32 * options.step_fraction).ceil() as usize;
 
-    let windows = (0..waveform.len() - WINDOW_WIDTH)
-        .step_by(WINDOW_WIDTH)
-        .map(|start| start..start + WINDOW_WIDTH);
+    let windows = (0..waveform.len() - window_width)
+        .step_by(step)
+        .map(|start| start..start + window_width);
     let window_count = dbg!(windows.len());
 
-    let seconds_per_window = WINDOW_WIDTH as f64 / waveform.sample_rate() as f64;
+    let seconds_per_window = window_width as f64 / waveform.sample_rate() as f64;
 
-    let mut image = ColorImage::new([window_count, FFT_WIDTH / 2], Color32::BLACK);
+    let mut image = ColorImage::new([window_count, fft_width / 2], Color32::BLACK);
     let mut keys = BTreeMap::<PianoKey, KeyPresses>::new();
 
     for (i, window) in windows.enumerate() {
         progress_callback(i as f32 / image.width() as f32);
 
         let waveform = waveform.slice(window);
-        let spectrum = waveform.spectrum(spectrum::Window::Hann, FFT_WIDTH);
+        let spectrum = waveform.spectrum(spectrum::Window::Hann, fft_width);
 
         let width = image.width();
         // let mut max = None;
@@ -48,7 +59,7 @@ pub fn analyze(
             //     *max = (bucket, amplitude)
             // }
 
-            if amplitude < threshold {
+            if amplitude < options.threshold {
                 continue;
             }
 

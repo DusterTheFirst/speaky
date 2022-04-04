@@ -10,7 +10,8 @@ use std::{
 
 use async_executor::Executor;
 use async_io::Timer;
-use atomic::Ordering;
+use atomic::{Atomic, Ordering};
+use eframe::egui::Context;
 use flume::{Receiver, RecvError, Sender};
 use futures_lite::future;
 use midir::{MidiOutput, MidiOutputConnection};
@@ -84,7 +85,7 @@ impl MidiPlayer {
     }
 
     #[must_use]
-    pub fn play_song(&self, notes: &BTreeMap<PianoKey, KeyPresses>) -> SongProgress {
+    pub fn play_song(&self, notes: &BTreeMap<PianoKey, KeyPresses>, ctx: Context) -> SongProgress {
         let song_start = Instant::now();
         let sender = self.sender.clone();
 
@@ -99,6 +100,7 @@ impl MidiPlayer {
         }
 
         let progress = Arc::new(SongProgressInner {
+            time: Atomic::new(0.0),
             notes: AtomicUsize::new(0),
             cancel: AtomicBool::new(false),
         });
@@ -123,6 +125,10 @@ impl MidiPlayer {
                     }
 
                     progress.notes.fetch_add(keys.len(), Ordering::SeqCst);
+                    progress
+                        .time
+                        .store((deadline - song_start).as_secs_f32(), Ordering::SeqCst);
+                    ctx.request_repaint();
 
                     deadlines.remove(&deadline);
                 }
@@ -137,12 +143,19 @@ pub type SongProgress = Weak<SongProgressInner>;
 
 pub struct SongProgressInner {
     notes: AtomicUsize,
+    time: Atomic<f32>,
     cancel: AtomicBool,
 }
+
+static_assertions::const_assert!(Atomic::<f32>::is_lock_free());
 
 impl SongProgressInner {
     pub fn notes_played(&self) -> usize {
         self.notes.load(Ordering::SeqCst)
+    }
+
+    pub fn time(&self) -> f32 {
+        self.time.load(Ordering::SeqCst)
     }
 
     pub fn cancel(&self) {
