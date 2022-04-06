@@ -36,6 +36,9 @@ symphonia = { version = "0.5.0", features = [
     "wav",
 ] }
 
+# Spectrogram
+colorous = "1.0.6"
+
 # Midi playback
 midir = "0.7.0"
 futures-lite = "1.12.0"

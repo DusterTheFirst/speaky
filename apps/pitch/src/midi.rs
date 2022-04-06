@@ -18,8 +18,8 @@ use midir::{MidiOutput, MidiOutputConnection};
 use tracing::{debug, info};
 
 use crate::{
+    analysis::{KeyPress, KeyPresses},
     key::PianoKey,
-    piano_roll::{KeyPress, KeyPresses},
 };
 
 pub struct MidiPlayer {

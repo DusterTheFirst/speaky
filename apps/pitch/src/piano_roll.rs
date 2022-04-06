@@ -1,184 +1,21 @@
-use std::{collections::BTreeMap, ops::Deref, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc};
 
 use eframe::{
     egui::{Frame, Id, Response, ScrollArea, Sense, TextFormat, Ui, Widget},
     emath::{Align, Align2},
     epaint::{
-        text::LayoutJob, Color32, FontId, Fonts, Galley, Pos2, Rect, Rounding, Shape, Stroke, Vec2,
+        text::LayoutJob, Color32, FontId, Fonts, Galley, Pos2, Rect, Rounding, Shape, Stroke,
+        TextureHandle, Vec2,
     },
 };
-use once_cell::sync::OnceCell;
 
 use crate::{
+    analysis::KeyPresses,
     key::{Accidental, MusicalNote, PianoKey},
     midi::MidiPlayer,
 };
 
-// FIXME: better data representation?
-// The start of the keypress in milliseconds
-pub type KeyStart = u128;
-// The duration of the keypress
-pub type KeyDuration = Duration;
-
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
-pub struct KeyPress {
-    pub start: KeyStart,
-    info: KeyPressInfo,
-}
-
-impl Deref for KeyPress {
-    type Target = KeyPressInfo;
-
-    fn deref(&self) -> &Self::Target {
-        &self.info
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
-#[non_exhaustive]
-pub struct KeyPressInfo {
-    pub duration: KeyDuration,
-    pub intensity: f32,
-}
-
-impl KeyPress {
-    pub fn new(
-        start: impl Into<KeyStart>,
-        duration: KeyDuration,
-        intensity: impl Into<f32>,
-    ) -> Self {
-        Self {
-            start: start.into(),
-            info: KeyPressInfo {
-                duration,
-                intensity: intensity.into(),
-            },
-        }
-    }
-
-    pub fn start_secs(&self) -> f32 {
-        self.start as f32 / 1000.0
-    }
-
-    pub fn duration_secs(&self) -> f32 {
-        self.duration.as_secs_f32()
-    }
-
-    pub fn end_secs(&self) -> f32 {
-        self.start_secs() + self.duration_secs()
-    }
-
-    pub fn duration(&self) -> Duration {
-        self.duration
-    }
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct KeyPresses {
-    key_list: BTreeMap<KeyStart, KeyPressInfo>,
-}
-
-impl FromIterator<KeyPress> for KeyPresses {
-    fn from_iter<T: IntoIterator<Item = KeyPress>>(iter: T) -> Self {
-        let mut presses = Self::new();
-        presses.extend(iter);
-        presses
-    }
-}
-
-impl<const N: usize> From<[KeyPress; N]> for KeyPresses {
-    fn from(array: [KeyPress; N]) -> Self {
-        let mut presses = Self::new();
-        presses.extend(array);
-        presses
-    }
-}
-
-impl Extend<KeyPress> for KeyPresses {
-    fn extend<T: IntoIterator<Item = KeyPress>>(&mut self, iter: T) {
-        for keypress in iter.into_iter() {
-            self.add(keypress);
-        }
-    }
-}
-
-impl KeyPresses {
-    pub fn new() -> Self {
-        Self {
-            key_list: BTreeMap::new(),
-        }
-    }
-
-    pub fn iter(
-        &self,
-    ) -> impl ExactSizeIterator<Item = KeyPress> + DoubleEndedIterator<Item = KeyPress> + '_ {
-        self.key_list
-            .iter()
-            .map(|(&start, &info)| KeyPress { start, info })
-    }
-
-    pub fn len(&self) -> usize {
-        self.key_list.len()
-    }
-
-    pub fn first(&self) -> Option<KeyPress> {
-        self.iter().next()
-    }
-
-    pub fn last(&self) -> Option<KeyPress> {
-        self.iter().next_back()
-    }
-
-    // FIXME: what do about intensity
-    // FIXME: do at analysis time?
-    pub fn add(&mut self, mut keypress: KeyPress) {
-        // Join with the note before this
-        if let Some((
-            previous_key_start,
-            KeyPressInfo {
-                duration: previous_key_duration,
-                ..
-            },
-        )) = self.key_list.range_mut(..keypress.start).next_back()
-        {
-            // Check if the end of the previous keypress overlaps with the start of this keypress
-            if *previous_key_start + previous_key_duration.as_millis() == keypress.start {
-                // Extend the previous key's duration
-                *previous_key_duration += keypress.duration;
-
-                return;
-            }
-        }
-
-        // Join with the note after this
-        if let Some((
-            &next_key_start,
-            &KeyPressInfo {
-                duration: next_key_duration,
-                ..
-            },
-        )) = self.key_list.range(keypress.start..).next()
-        {
-            // Check if the end of this keypress overlaps with the start of the next keypress
-            if keypress.start + keypress.duration.as_millis() == next_key_start {
-                // Extend this key's duration
-                keypress.info.duration += next_key_duration;
-
-                // Remove the note after this
-                self.key_list.remove(&next_key_start);
-            }
-        }
-
-        self.key_list.insert(keypress.start, keypress.info);
-    }
-
-    // FIXME: Does not verify duration
-    pub fn remove(&mut self, keypress: &KeyPress) {
-        self.key_list.remove(&keypress.start);
-    }
-}
-
-pub struct PianoRoll<'player, 'keys> {
+pub struct PianoRoll<'player, 'keys, 'spectrum> {
     // TODO: scales?
     preference: Accidental,
 
@@ -190,9 +27,10 @@ pub struct PianoRoll<'player, 'keys> {
     midi: &'player MidiPlayer,
 
     keys: &'keys BTreeMap<PianoKey, KeyPresses>,
+    spectrum: Option<&'spectrum TextureHandle>,
 }
 
-impl<'player, 'keys> PianoRoll<'player, 'keys> {
+impl<'player, 'keys, 'spectrum> PianoRoll<'player, 'keys, 'spectrum> {
     // TODO: builder
     pub fn new(
         midi: &'player MidiPlayer,
@@ -201,6 +39,7 @@ impl<'player, 'keys> PianoRoll<'player, 'keys> {
         key_height: f32,
         seconds_per_width: f32,
         keys: &'keys BTreeMap<PianoKey, KeyPresses>,
+        spectrum: Option<&'spectrum TextureHandle>,
     ) -> Self {
         Self {
             key_height,
@@ -209,11 +48,12 @@ impl<'player, 'keys> PianoRoll<'player, 'keys> {
             preference,
             seconds_per_width,
             cursor,
+            spectrum,
         }
     }
 }
 
-impl PianoRoll<'_, '_> {
+impl PianoRoll<'_, '_, '_> {
     fn layout_key(fonts: &Fonts, note: &MusicalNote, height: f32) -> Arc<Galley> {
         let mut job = LayoutJob::default();
 
@@ -234,8 +74,7 @@ impl PianoRoll<'_, '_> {
                 },
             );
 
-            static WIDTH: OnceCell<f32> = OnceCell::new();
-            let width = WIDTH.get_or_init(|| {
+            let width = {
                 let mut job = LayoutJob::default();
 
                 job.append(
@@ -245,7 +84,7 @@ impl PianoRoll<'_, '_> {
                 );
 
                 fonts.layout_job(job).rect.width()
-            });
+            };
 
             -width / 2.0
         } else {
@@ -274,22 +113,19 @@ impl PianoRoll<'_, '_> {
 
             let note = key.as_note(self.preference);
 
-            let (text, text_rect) = {
-                let text_galley = Self::layout_key(&ui.fonts(), &note, self.key_height);
+            let text_galley = Self::layout_key(&ui.fonts(), &note, self.key_height);
 
-                let text_rect = Align2::LEFT_CENTER.anchor_rect(Rect::from_min_size(
-                    top_left + Vec2::new(0.0, self.key_height / 2.0),
-                    text_galley.size(),
-                ));
-
-                (Shape::galley(text_rect.min, text_galley), text_rect)
-            };
+            let text_rect = Align2::LEFT_CENTER.anchor_rect(Rect::from_min_size(
+                top_left + Vec2::new(0.0, self.key_height / 2.0),
+                text_galley.size(),
+            ));
 
             // Update the max left margin
             *out_left_margin = out_left_margin.max(text_rect.width());
 
-            // TODO: hover/click color change somehow also play midi note pls thx
-            ui.interact(text_rect, Id::new(key), Sense::hover())
+            // TODO: click play midi note pls thx
+            let response = ui
+                .interact(text_rect, Id::new(key), Sense::hover())
                 .on_hover_ui_at_pointer(|ui| {
                     let note = key.as_note(Accidental::Sharp);
 
@@ -299,8 +135,12 @@ impl PianoRoll<'_, '_> {
                     ui.label(format!("Key #{}", key.number()));
                 });
 
-            // TODO: hover and click on label
-            text
+            if response.hovered() {
+                // TODO: better color and maybe highlight whole key row????
+                Shape::galley_with_color(text_rect.min, text_galley, Color32::RED)
+            } else {
+                Shape::galley(text_rect.min, text_galley)
+            }
         })
     }
 
@@ -361,7 +201,7 @@ impl PianoRoll<'_, '_> {
                 let response = ui
                     .interact(
                         rect,
-                        Id::new((key, keypress.start)),
+                        Id::new((key, keypress.start())),
                         Sense::click_and_drag(),
                     )
                     .on_hover_ui_at_pointer(|ui| {
@@ -376,7 +216,7 @@ impl PianoRoll<'_, '_> {
                             keypress.end_secs(),
                             keypress.duration_secs()
                         ));
-                        ui.label(format!("Intensity: {}", keypress.intensity));
+                        ui.label(format!("Intensity: {}", keypress.intensity()));
                     });
 
                 if response.clicked() {
@@ -446,7 +286,7 @@ impl PianoRoll<'_, '_> {
     }
 }
 
-impl Widget for PianoRoll<'_, '_> {
+impl Widget for PianoRoll<'_, '_, '_> {
     fn ui(self, ui: &mut Ui) -> Response {
         Frame::canvas(ui.style())
             .show(ui, |ui| {
@@ -493,6 +333,17 @@ impl Widget for PianoRoll<'_, '_> {
 
                         shapes.extend(self.draw_notes(ui, drawing_window, margin));
                         shapes.extend(self.draw_cursor(drawing_window, margin, size));
+                        if let Some(spectrum) = self.spectrum {
+                            shapes.extend([Shape::image(
+                                spectrum.id(),
+                                Rect::from_min_size(
+                                    drawing_window.min,
+                                    spectrum.size_vec2().min(drawing_window.size()),
+                                ),
+                                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                                Color32::WHITE.linear_multiply(0.5),
+                            )])
+                        }
 
                         (shapes, margin)
                     };
@@ -508,3 +359,12 @@ impl Widget for PianoRoll<'_, '_> {
             .response
     }
 }
+
+struct PianoRollPainter {
+    drawing_window: Rect,
+    size: Vec2,
+}
+
+impl PianoRollPainter {}
+
+// TODO: functions to calculate positions taking into account scaling and all that shit fuck :)

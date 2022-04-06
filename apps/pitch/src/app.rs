@@ -1,5 +1,4 @@
 use std::{
-    borrow::Cow,
     collections::BTreeMap,
     path::PathBuf,
     sync::{atomic::Ordering, Arc},
@@ -11,24 +10,24 @@ use atomic::Atomic;
 use audio::waveform::Waveform;
 use eframe::{
     egui::{
-        Button, CentralPanel, CollapsingHeader, Context, Grid, InnerResponse, Layout, ProgressBar,
-        RichText, ScrollArea, Slider, TextFormat, TopBottomPanel, Ui, Visuals, Window,
+        Button, CentralPanel, Context, Layout, ProgressBar, RichText, Slider, TextFormat,
+        TopBottomPanel, Ui, Visuals, Window,
     },
     emath::{Align, Align2},
     epaint::{text::LayoutJob, Color32, TextureHandle, Vec2},
     epi::{self, App, Storage, APP_KEY},
 };
 use once_cell::sync::Lazy;
-use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use parking_lot::{RwLock, RwLockReadGuard};
 use ritelinked::LinkedHashSet;
 use static_assertions::const_assert;
 
 use crate::{
-    analysis::{analyze, AnalysisOptions},
+    analysis::{analyze, AnalysisOptions, KeyPress, KeyPresses},
     decode::AudioDecoder,
     key::{Accidental, PianoKey},
     midi::{MidiPlayer, SongProgress},
-    piano_roll::{KeyPress, KeyPresses, PianoRoll},
+    piano_roll::PianoRoll,
     ui_error::UiError,
 };
 
@@ -39,7 +38,9 @@ pub struct Application {
     seconds_per_width: f32,
     key_height: f32,
     preference: Accidental,
+    spectrogram: bool,
 
+    // FIXME: RWLock really useful at all?
     waveform: Arc<RwLock<Option<Waveform<'static>>>>,
     analysis: Arc<RwLock<Option<AudioAnalysis>>>,
     analysis_options: AnalysisOptions,
@@ -103,10 +104,11 @@ impl Application {
             seconds_per_width: 30.0,
             key_height: 10.0,
             preference: Accidental::Flat,
+            spectrogram: true,
 
             analysis_options: AnalysisOptions {
                 threshold: 100.0,
-                fft_width: 14,
+                fft_size: 14,
                 window_fraction: 0.5,
                 step_fraction: 1.0,
             },
@@ -402,8 +404,6 @@ impl App for Application {
                 });
 
                 ui.with_layout(Layout::right_to_left(), |ui| {
-                    ui.spacing_mut().item_spacing.x = 0.0;
-
                     ui.label(" ms");
                     ui.label(
                         RichText::new(format!(
@@ -417,80 +417,115 @@ impl App for Application {
             });
         });
 
-        if let Some(spectrum) = self
-            .analysis
-            .read()
-            .as_ref()
-            .and_then(|analysis| analysis.spectrum.as_ref())
-        {
-            TopBottomPanel::bottom("spectrum")
-                .resizable(true)
-                .frame(eframe::egui::Frame::dark_canvas(&ctx.style()))
-                .show(ctx, |ui| {
-                    ScrollArea::both().show(ui, |ui| ui.image(spectrum, spectrum.size_vec2()));
-                });
-        }
-
         CentralPanel::default().show(ctx, |ui| {
             let analysis = self.analysis.clone();
 
             let notes = ui
-                .horizontal(|ui| {
+                .horizontal_wrapped(|ui| {
                     ui.vertical(|ui| {
                         ui.heading("Waveform");
                         ui.set_enabled(self.waveform.read().is_some());
 
                         if ui.button("Unload").clicked() {
                             *self.waveform.write() = None;
+                            *self.analysis.write() = None;
                         }
-                        if ui.button("Analyze").clicked() {
-                            self.analyze_waveform(ui.ctx().clone());
-                        }
+
+                        let waveform = self.waveform.read();
+                        let waveform = waveform.as_ref();
+
+                        ui.label(format!(
+                            "Duration: {:.2}s",
+                            waveform.map(|w| w.duration()).unwrap_or(f32::NAN)
+                        ));
+                        ui.label(format!(
+                            "Sample Rate: {} Hz",
+                            waveform.map(|w| w.sample_rate()).unwrap_or_default()
+                        ));
+                        ui.label(format!(
+                            "Samples: {}",
+                            waveform.map(|w| w.len()).unwrap_or_default()
+                        ));
                     });
 
                     ui.vertical(|ui| {
                         ui.heading("Analysis Options");
 
-                        ui.set_enabled(self.waveform.read().is_some());
-                        ui.add(
-                            Slider::new(&mut self.analysis_options.fft_width, 1..=16)
-                                .text("FFT Width")
-                                .prefix("2^")
-                                .suffix(" samples"),
-                        );
-                        ui.add(
-                            Slider::new(&mut self.analysis_options.window_fraction, 0.0..=1.0)
-                                .text("Window Fraction")
-                                .logarithmic(true),
-                        );
-                        ui.add(
-                            Slider::new(&mut self.analysis_options.step_fraction, 0.0..=1.0)
-                                .text("Step Fraction")
-                                .logarithmic(true),
-                        );
+                        let waveform = self.waveform.read();
+                        ui.set_enabled(waveform.is_some());
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                Slider::new(&mut self.analysis_options.fft_size, 1..=14)
+                                    .text("FFT Width")
+                                    .prefix("2^")
+                                    .suffix(" samples"),
+                            );
+                            ui.label(format!(
+                                "({:.4}s)",
+                                waveform
+                                    .as_ref()
+                                    .map(|w| w.time_from_sample(self.analysis_options.fft_width()))
+                                    .unwrap_or_default()
+                            ));
+                        });
+
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                Slider::new(&mut self.analysis_options.window_fraction, 0.0..=1.0)
+                                    .text("Window Fraction")
+                                    .logarithmic(true),
+                            );
+                            ui.label(format!(
+                                "({:.4}s)",
+                                waveform
+                                    .as_ref()
+                                    .map(|w| w
+                                        .time_from_sample(self.analysis_options.window_width()))
+                                    .unwrap_or_default()
+                            ));
+                        });
+
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                Slider::new(&mut self.analysis_options.step_fraction, 0.0..=1.0)
+                                    .text("Step Fraction")
+                                    .logarithmic(true),
+                            );
+                            ui.label(format!(
+                                "({:.4}s)",
+                                waveform
+                                    .as_ref()
+                                    .map(|w| w.time_from_sample(self.analysis_options.step()))
+                                    .unwrap_or_default()
+                            ));
+                        });
 
                         ui.add(
                             Slider::new(&mut self.analysis_options.threshold, 0.0..=1000.0)
                                 .text("Note threshold"),
                         );
+
+                        drop(waveform);
+
+                        if ui.button("Analyze").clicked() {
+                            self.analyze_waveform(ui.ctx().clone());
+                        }
                     });
 
-                    ui.vertical(|ui| {
-                        ui.heading("Analysis");
+                    let notes = ui
+                        .vertical(|ui| {
+                            ui.heading("Analysis");
 
-                        let mut analysis = analysis.write();
-                        ui.set_enabled(analysis.is_some());
+                            ui.set_enabled(analysis.read().is_some());
 
-                        if ui.button("Unload").clicked() {
-                            *analysis = None;
-                            if let Some(progress) = self.current_song.upgrade() {
-                                progress.cancel();
+                            if ui.button("Unload").clicked() {
+                                *analysis.write() = None;
+                                if let Some(progress) = self.current_song.upgrade() {
+                                    progress.cancel();
+                                }
                             }
-                        }
 
-                        let notes = RwLockReadGuard::map(
-                            RwLockWriteGuard::downgrade(analysis),
-                            |analysis| {
+                            let notes = RwLockReadGuard::map(analysis.read(), |analysis| {
                                 static EMPTY: Lazy<BTreeMap<PianoKey, KeyPresses>> =
                                     Lazy::new(BTreeMap::new);
 
@@ -498,68 +533,74 @@ impl App for Application {
                                     .as_ref()
                                     .map(|analysis| &analysis.notes)
                                     .unwrap_or(&EMPTY)
-                            },
+                            });
+
+                            let notes_count = notes
+                                .values()
+                                .map(|key_presses| key_presses.len())
+                                .sum::<usize>();
+
+                            if let Some(progress) = self.current_song.upgrade() {
+                                ui.label(format!(
+                                    "Played {} of {} notes",
+                                    progress.notes_played(),
+                                    notes_count
+                                ));
+                                ui.label(format!("{:.2}s", progress.time()));
+                            } else {
+                                ui.label(format!("Loaded {} notes", notes_count));
+                            }
+
+                            ui.horizontal(|ui| match self.current_song.upgrade() {
+                                Some(progress) => {
+                                    if ui.button("Stop Playing").clicked() {
+                                        progress.cancel();
+                                    }
+                                }
+                                None => {
+                                    if ui.button("Play Notes").clicked() {
+                                        self.current_song =
+                                            self.midi.play_song(&notes, ctx.clone());
+                                    }
+                                }
+                            });
+
+                            notes
+                        })
+                        .inner;
+
+                    ui.vertical(|ui| {
+                        ui.heading("Visualization");
+                        ui.checkbox(&mut self.spectrogram, "Show Spectrogram");
+                        ui.add(
+                            Slider::new(&mut self.seconds_per_width, 1.0..=100.0).text("Scale X"),
                         );
+                        ui.add(Slider::new(&mut self.key_height, 1.0..=100.0).text("Scale Y"));
+                    });
 
-                        ui.horizontal(|ui| match self.current_song.upgrade() {
-                            Some(progress) => {
-                                if ui.button("Stop Playing").clicked() {
-                                    progress.cancel();
-                                }
-                            }
-                            None => {
-                                if ui.button("Play Notes").clicked() {
-                                    self.current_song = self.midi.play_song(&notes, ctx.clone());
-                                }
-                            }
-                        });
-
-                        notes
-                    })
-                    .inner
+                    notes
                 })
                 .inner;
 
             {
-                let notes_count = notes
-                    .values()
-                    .map(|key_presses| key_presses.len())
-                    .sum::<usize>();
-
-                if let Some(progress) = self.current_song.upgrade() {
-                    ui.label(format!(
-                        "Played {} of {} notes",
-                        progress.notes_played(),
-                        notes_count
-                    ));
-                    ui.label(format!("{:.2}s", progress.time()));
+                let analysis = self.analysis.read();
+                let spectrum = if self.spectrogram {
+                    analysis
+                        .as_ref()
+                        .and_then(|analysis| analysis.spectrum.as_ref())
                 } else {
-                    ui.label(format!("Loaded {} notes", notes_count));
-                }
+                    None
+                };
 
-                ui.separator();
-
-                ui.add(Slider::new(&mut self.seconds_per_width, 1.0..=100.0).text("Scale X"));
-
-                Grid::new("piano_roll_grid")
-                    .num_columns(2)
-                    .min_row_height(ui.available_height())
-                    .show(ui, |ui| {
-                        ui.add(
-                            Slider::new(&mut self.key_height, 1.0..=100.0)
-                                .vertical()
-                                .text("Scale Y"),
-                        );
-
-                        ui.add(PianoRoll::new(
-                            &self.midi,
-                            self.preference,
-                            self.current_song.upgrade().map(|progress| progress.time()),
-                            self.key_height,
-                            self.seconds_per_width,
-                            &notes,
-                        ));
-                    });
+                ui.add(PianoRoll::new(
+                    &self.midi,
+                    self.preference,
+                    self.current_song.upgrade().map(|progress| progress.time()),
+                    self.key_height,
+                    self.seconds_per_width,
+                    &notes,
+                    spectrum,
+                ));
             }
 
             self.detect_files_being_dropped(ui);

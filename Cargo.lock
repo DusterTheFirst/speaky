@@ -521,6 +521,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "colorous"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98804822ee752112e060b40110ae0188eff72b036baf49e61a9f2028eaf33164"
+
+[[package]]
 name = "combine"
 version = "4.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -890,7 +896,7 @@ checksum = "6907e25393cdcc1f4f3f513d9aac1e840eb1cc341a0fccb01171f7d14d10b946"
 [[package]]
 name = "eframe"
 version = "0.17.0"
-source = "git+https://github.com/emilk/egui?rev=c2039920de4c4881ee04fd04658f1c086084f043#c2039920de4c4881ee04fd04658f1c086084f043"
+source = "git+https://github.com/dusterthefirst/egui?branch=shape-galley-with-color#46997a013e82bbdd1fba85f295af0c84482cbe8e"
 dependencies = [
  "egui",
  "egui-winit",
@@ -902,7 +908,7 @@ dependencies = [
 [[package]]
 name = "egui"
 version = "0.17.0"
-source = "git+https://github.com/emilk/egui?rev=c2039920de4c4881ee04fd04658f1c086084f043#c2039920de4c4881ee04fd04658f1c086084f043"
+source = "git+https://github.com/dusterthefirst/egui?branch=shape-galley-with-color#46997a013e82bbdd1fba85f295af0c84482cbe8e"
 dependencies = [
  "ahash 0.7.6",
  "epaint",
@@ -915,7 +921,7 @@ dependencies = [
 [[package]]
 name = "egui-winit"
 version = "0.17.0"
-source = "git+https://github.com/emilk/egui?rev=c2039920de4c4881ee04fd04658f1c086084f043#c2039920de4c4881ee04fd04658f1c086084f043"
+source = "git+https://github.com/dusterthefirst/egui?branch=shape-galley-with-color#46997a013e82bbdd1fba85f295af0c84482cbe8e"
 dependencies = [
  "copypasta",
  "dark-light",
@@ -932,7 +938,7 @@ dependencies = [
 [[package]]
 name = "egui_glow"
 version = "0.17.0"
-source = "git+https://github.com/emilk/egui?rev=c2039920de4c4881ee04fd04658f1c086084f043#c2039920de4c4881ee04fd04658f1c086084f043"
+source = "git+https://github.com/dusterthefirst/egui?branch=shape-galley-with-color#46997a013e82bbdd1fba85f295af0c84482cbe8e"
 dependencies = [
  "bytemuck",
  "egui",
@@ -949,7 +955,7 @@ dependencies = [
 [[package]]
 name = "egui_web"
 version = "0.17.0"
-source = "git+https://github.com/emilk/egui?rev=c2039920de4c4881ee04fd04658f1c086084f043#c2039920de4c4881ee04fd04658f1c086084f043"
+source = "git+https://github.com/dusterthefirst/egui?branch=shape-galley-with-color#46997a013e82bbdd1fba85f295af0c84482cbe8e"
 dependencies = [
  "bytemuck",
  "egui",
@@ -966,7 +972,7 @@ dependencies = [
 [[package]]
 name = "emath"
 version = "0.17.0"
-source = "git+https://github.com/emilk/egui?rev=c2039920de4c4881ee04fd04658f1c086084f043#c2039920de4c4881ee04fd04658f1c086084f043"
+source = "git+https://github.com/dusterthefirst/egui?branch=shape-galley-with-color#46997a013e82bbdd1fba85f295af0c84482cbe8e"
 dependencies = [
  "bytemuck",
  "serde",
@@ -1005,7 +1011,7 @@ dependencies = [
 [[package]]
 name = "epaint"
 version = "0.17.0"
-source = "git+https://github.com/emilk/egui?rev=c2039920de4c4881ee04fd04658f1c086084f043#c2039920de4c4881ee04fd04658f1c086084f043"
+source = "git+https://github.com/dusterthefirst/egui?branch=shape-galley-with-color#46997a013e82bbdd1fba85f295af0c84482cbe8e"
 dependencies = [
  "ab_glyph",
  "ahash 0.7.6",
@@ -1020,7 +1026,7 @@ dependencies = [
 [[package]]
 name = "epi"
 version = "0.17.0"
-source = "git+https://github.com/emilk/egui?rev=c2039920de4c4881ee04fd04658f1c086084f043#c2039920de4c4881ee04fd04658f1c086084f043"
+source = "git+https://github.com/dusterthefirst/egui?branch=shape-galley-with-color#46997a013e82bbdd1fba85f295af0c84482cbe8e"
 dependencies = [
  "directories-next",
  "egui",
@@ -2142,6 +2148,7 @@ dependencies = [
  "atomic",
  "audio",
  "color-eyre",
+ "colorous",
  "eframe",
  "flume",
  "futures-lite",
