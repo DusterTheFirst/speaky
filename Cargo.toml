@@ -16,5 +16,5 @@ debug = 1
 microfft = { git = "https://gitlab.com/teskje/microfft-rs.git", rev = "f783b1effe66a24984f46b3fccca00d18fda5970" }
 
 # eframe = { path = "../egui/eframe" }
-eframe = { git = "https://github.com/dusterthefirst/egui", branch = "shape-galley-with-color" }
-# eframe = { git = "https://github.com/emilk/egui", rev = "68d5806b41725fb8f8a5e62d7acd94b5ac9140f0" }
+# eframe = { git = "https://github.com/dusterthefirst/egui", branch = "shape-galley-with-color" }
+eframe = { git = "https://github.com/emilk/egui", rev = "dd58d5175faa9a21eebb45c4a9615c314be51f56" }
