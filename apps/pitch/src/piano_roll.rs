@@ -103,13 +103,13 @@ impl PianoRoll<'_, '_, '_> {
     fn draw_key_text_ui<'s>(
         &'s self,
         ui: &'s Ui,
-        drawing_window: Rect,
-        top_margin: f32,
-        out_left_margin: &'s mut f32,
+        top_left: Pos2,
+        allocated_space: &'s mut Vec2,
     ) -> impl Iterator<Item = Shape> + 's {
         PianoKey::all().enumerate().map(move |(row, key)| {
             let y = row as f32 * self.key_height;
-            let top_left = Pos2::new(0.0, y + top_margin) + drawing_window.min.to_vec2();
+            // The top left of this key's row
+            let top_left = top_left + Vec2::new(0.0, y);
 
             let note = key.as_note(self.preference);
 
@@ -120,8 +120,9 @@ impl PianoRoll<'_, '_, '_> {
                 text_galley.size(),
             ));
 
-            // Update the max left margin
-            *out_left_margin = out_left_margin.max(text_rect.width());
+            // Update the max width of all of the labels
+            *allocated_space =
+                allocated_space.max(Vec2::new(text_rect.width(), y + self.key_height));
 
             // TODO: click play midi note pls thx
             let response = ui
@@ -286,6 +287,8 @@ impl PianoRoll<'_, '_, '_> {
     }
 }
 
+impl PianoRoll<'_, '_, '_> {}
+
 impl Widget for PianoRoll<'_, '_, '_> {
     fn ui(self, ui: &mut Ui) -> Response {
         Frame::canvas(ui.style())
@@ -293,23 +296,26 @@ impl Widget for PianoRoll<'_, '_, '_> {
                 ScrollArea::both().show(ui, |ui| {
                     let drawing_window = ui.available_rect_before_wrap();
 
-                    let size = {
-                        let alloc_height = (self.key_height * PianoKey::all().len() as f32)
-                            .max(drawing_window.height());
+                    // let size = {
+                    //     let piano_height = self.key_height * PianoKey::all().len() as f32;
+                    //     // Fill avaliable space
+                    //     let piano_height = piano_height.max(drawing_window.height());
 
-                        let alloc_width = self
-                            .keys
-                            .values()
-                            .filter_map(|set| {
-                                set.last()
-                                    .map(|keypress| keypress.end_secs() * self.seconds_per_width)
-                            })
-                            .reduce(f32::max)
-                            .unwrap_or_default()
-                            .max(drawing_window.width());
+                    //     let alloc_width = self
+                    //         .keys
+                    //         .values()
+                    //         .filter_map(|set| {
+                    //             set.last()
+                    //                 .map(|keypress| keypress.end_secs() * self.seconds_per_width)
+                    //         })
+                    //         .reduce(f32::max)
+                    //         .unwrap_or_default()
+                    //         .max(drawing_window.width());
 
-                        Vec2::new(alloc_width, alloc_height)
-                    };
+                    //     Vec2::new(alloc_width, alloc_height)
+                    // };
+
+                    let rect = Rect::from_min_size(drawing_window.min, size);
 
                     let time_text_size = 15.0;
 
